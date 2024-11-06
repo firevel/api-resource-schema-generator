@@ -1,0 +1,17 @@
+{
+    "name": "firevel/api-resource-schema-generator",
+    "type": "library",
+    "license": "MIT",
+    "autoload": {
+        "psr-4": {
+            "Firevel\\ApiResourceSchemaGenerator\\": "src/"
+        }
+    },
+    "authors": [
+        {
+            "name": "Michael Slowik",
+            "email": "slowik.michael@gmail.com"
+        }
+    ],
+    "require": {}
+}
