@@ -16,7 +16,7 @@
     "extra": {
         "laravel": {
             "providers": [
-                "Firevel\\ApiResourceSchemaGenerator\\ServiceProvider"
+                "Firevel\\ApiResourceSchemaGenerator\\ApiResourceSchemaServiceProvider"
             ]
         }
     },

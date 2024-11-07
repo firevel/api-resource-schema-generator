@@ -5,7 +5,7 @@ namespace Firevel\ApiResourceSchemaGenerator;
 use Firevel\Generator\FirevelGeneratorManager;
 use Illuminate\Support\ServiceProvider;
 
-class TemplateGeneratorServiceProvider extends ServiceProvider
+class ApiResourceSchemaServiceProvider extends ServiceProvider
 {
     public function boot(FirevelGeneratorManager $manager)
     {
