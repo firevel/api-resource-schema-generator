@@ -13,5 +13,12 @@
             "email": "slowik.michael@gmail.com"
         }
     ],
+    "extra": {
+        "laravel": {
+            "providers": [
+                "Firevel\\ApiResourceSchemaGenerator\\ServiceProvider"
+            ]
+        }
+    },
     "require": {}
 }
