@@ -1,6 +1,6 @@
 <?php
 
-namespace App\Generators;
+namespace Firevel\ApiResourceSchemaGenerator;
 
 use Firevel\Generator\Generators\BaseGenerator;
 use Firevel\Generator\Resource;
