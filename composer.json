@@ -21,6 +21,6 @@
         }
     },
     "require": {
-        "firevel/generator": "^0.2"
+        "firevel/generator": "^0.3.0"
     }
 }
