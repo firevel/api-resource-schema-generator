@@ -136,6 +136,7 @@ class SchemaHandler extends BaseGenerator
             case 'date':
             case 'uuid':
             case 'string':
+            case 'text':
             case 'boolean':
             case 'json':
             case 'timestamp':
