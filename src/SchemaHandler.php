@@ -210,8 +210,10 @@ class SchemaHandler extends BaseGenerator
             }
             if (!empty($field['editable'])) {
                 $rule = $types[$field['type']];
-                if (! empty($field['required'])) {
+                if (empty($field['required'])) {
                     $rule .= "|required";
+                } else {
+                    $rule .= "|nullable";
                 }
                 $output['requests']['update']['rules'][$field['name']] = $types[$field['type']];
             }
