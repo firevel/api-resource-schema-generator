@@ -251,7 +251,7 @@ class SchemaHandler extends BaseGenerator
     public function getFilterableByType($type)
     {
         $types = [
-            'increments' => 'integer',
+            'increments' => 'id',
             'integer' => 'integer',
             'decimal' => 'integer',
             'date' => 'date',
