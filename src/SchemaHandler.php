@@ -123,11 +123,10 @@ class SchemaHandler extends BaseGenerator
     public function getMigrationByField($field)
     {
         $migration = [];
-        if (empty($field['required'])) {
-            $migration['nullable'] = null;
-        }
+        $autoSet = false;
         switch ($field['type']) {
             case 'increments':
+                $autoSet = true;
                 $migration['increments'] = $field['name'];
                 unset($migration['nullable']);
                 break;
@@ -152,6 +151,9 @@ class SchemaHandler extends BaseGenerator
             case 'array':
                 $migration['json'] = $field['name'];
                 break;
+        }
+        if (empty($field['required']) && !$autoSet) {
+            $migration['nullable'] = null;
         }
         if (!empty($field['index'])) {
             switch ($field['index']) {
