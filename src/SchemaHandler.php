@@ -232,7 +232,8 @@ class SchemaHandler extends BaseGenerator
             $name = Str::camel($field['name']);
             switch ($field['type']) {
                 case 'belongsToMany':
-                    $output['model']['relationships'][$name] = [$field['type'], $field['related']];
+                    $related = $field['related'] ?? Str::studly(Str::singular($field['name'])) . '::class';
+                    $output['model']['relationships'][$name] = [$field['type'] => [$related]];
                     break;
                 case 'morphMany':
                     $output['model']['relationships'][$name] = [$field['related'], $field['field']];
