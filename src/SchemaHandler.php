@@ -145,6 +145,9 @@ class SchemaHandler extends BaseGenerator
             case 'timestamp':
                 $migration[$field['type']] = $field['name'];
                 break;
+            case 'object':
+                $migration['json'] = $field['name'];
+                break;
             case 'datetime':
                 $migration['dateTime'] = $field['name'];
                 break;
@@ -192,6 +195,7 @@ class SchemaHandler extends BaseGenerator
             'text' => 'string',
             'boolean' => 'boolean',
             'json' => 'string',
+            'object' => 'array',
             'array' => 'string',
         ];
 
@@ -267,6 +271,7 @@ class SchemaHandler extends BaseGenerator
             'text' => 'string',
             'boolean' => 'boolean',
             'json' => 'json',
+            'object' => 'json',
             'array' => 'array',
         ];
         if (empty($types[$type])) {
