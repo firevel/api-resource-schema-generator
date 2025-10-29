@@ -19,6 +19,7 @@ class SchemaHandler extends BaseGenerator
         $this->addFillables($resource);
         $this->addDefaults($resource);
         $this->addSortable($resource);
+        $this->addSearchable($resource);
         $this->addTransformer($resource);
         $this->addFilterables($resource);
         $this->addMigrations($resource);
@@ -60,6 +61,25 @@ class SchemaHandler extends BaseGenerator
             if (!empty($field['sortable'])) {
                 $output['model']['sortable'][] = $field['name'];
             }
+        }
+        $resource->output = $output;
+        return $resource;
+    }
+
+    public function addSearchable($resource)
+    {
+        $output = $resource->output;
+        $output['model']['searchable'] = [];
+        foreach ($resource->fields as $field) {
+            if (!empty($field['searchable'])) {
+                $output['model']['searchable'][] = $field['name'];
+            }
+        }
+        if (count($output['model']['searchable']) > 0) {
+            if (empty($output['model']['use'])) {
+                $output['model']['use'] = [];
+            }
+            $output['model']['use']['Searchable'] = 'Laravel\Scout\Searchable';
         }
         $resource->output = $output;
         return $resource;
