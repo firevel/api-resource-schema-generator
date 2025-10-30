@@ -232,19 +232,37 @@ class SchemaHandler extends BaseGenerator
         }
 
         foreach ($resource->fields as $field) {
-            if (!empty($field['creatable'])) {
-                $rule = $types[$field['type']];
-                if (! empty($field['required'])) {
-                    $rule .= "|required";
+            $hasCustomRules = !empty($field['rules']) || !empty($field['createRules']) || !empty($field['updateRules']);
+
+            if ($hasCustomRules) {
+                $baseRules = !empty($field['rules']) ? $field['rules'] : [];
+                $createRules = !empty($field['createRules']) ? $field['createRules'] : [];
+                $updateRules = !empty($field['updateRules']) ? $field['updateRules'] : [];
+
+                $storeRuleSet = array_merge($baseRules, $createRules);
+                if (count($storeRuleSet) > 0) {
+                    $output['requests']['store']['rules'][$field['name']] = implode('|', $storeRuleSet);
                 }
-                $output['requests']['store']['rules'][$field['name']] = $rule;
-            }
-            if (!empty($field['editable'])) {
-                $rule = $types[$field['type']];
-                if (empty($field['required'])) {
-                    $rule .= "|nullable";
+
+                $updateRuleSet = array_merge($baseRules, $updateRules);
+                if (count($updateRuleSet) > 0) {
+                    $output['requests']['update']['rules'][$field['name']] = implode('|', $updateRuleSet);
                 }
-                $output['requests']['update']['rules'][$field['name']] = $rule;
+            } else {
+                if (!empty($field['creatable'])) {
+                    $rule = $types[$field['type']];
+                    if (! empty($field['required'])) {
+                        $rule .= "|required";
+                    }
+                    $output['requests']['store']['rules'][$field['name']] = $rule;
+                }
+                if (!empty($field['editable'])) {
+                    $rule = $types[$field['type']];
+                    if (empty($field['required'])) {
+                        $rule .= "sometimes|nullable";
+                    }
+                    $output['requests']['update']['rules'][$field['name']] = $rule;
+                }
             }
         }
         $resource->output = $output;
