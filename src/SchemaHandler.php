@@ -136,6 +136,21 @@ class SchemaHandler extends BaseGenerator
         foreach ($resource->fields as $field) {
             $output['migrations']['create'][] = $this->getMigrationByField($field);
         }
+
+        // Process composite indexes
+        if (!empty($resource->indexes)) {
+            $output['migrations']['index'] = [];
+            foreach ($resource->indexes as $index) {
+                $indexDefinition = [
+                    $index['type'] => !empty($index['name'])
+                        ? [$index['fields'], $index['name']]
+                        : [$index['fields']]
+                ];
+
+                $output['migrations']['index'][] = $indexDefinition;
+            }
+        }
+
         $resource->output = $output;
         return $resource;
     }
