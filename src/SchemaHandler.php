@@ -293,18 +293,60 @@ class SchemaHandler extends BaseGenerator
 
         foreach ($resource->relationships as $field) {
             $name = Str::camel($field['name']);
-            switch ($field['type']) {
-                case 'belongsToMany':
-                    $related = $field['related'] ?? Str::studly(Str::singular($field['name'])) . '::class';
-                    $output['model']['relationships'][$name] = [$field['type'] => [$related]];
-                    break;
-                case 'morphMany':
-                    $output['model']['relationships'][$name] = [$field['related'], $field['field']];
-                    break;
-                case 'morphTo':
+            $type = $field['type'];
+
+            switch ($type) {
                 case 'belongsTo':
+                case 'hasOne':
                 case 'hasMany':
-                    $output['model']['relationships'][$name] = $field['type'];
+                    // Default: infer model from relationship name
+                    $target = !empty($field['target'])
+                        ? $field['target'] . '::class'
+                        : Str::studly(Str::singular($field['name'])) . '::class';
+
+                    if (!empty($field['foreignKey'])) {
+                        $output['model']['relationships'][$name] = [
+                            $type => [$target, $field['foreignKey']]
+                        ];
+                    } else {
+                        // Simple case - let Laravel infer the foreign key
+                        $output['model']['relationships'][$name] = $type;
+                    }
+                    break;
+
+                case 'belongsToMany':
+                    $target = !empty($field['target'])
+                        ? $field['target'] . '::class'
+                        : Str::studly(Str::singular($field['name'])) . '::class';
+
+                    $params = [$target];
+
+                    // Add foreignKey as pivot table name if provided
+                    if (!empty($field['foreignKey'])) {
+                        $params[] = $field['foreignKey'];
+                    }
+
+                    $output['model']['relationships'][$name] = [$type => $params];
+                    break;
+
+                case 'morphTo':
+                    if (!empty($field['morphName'])) {
+                        $output['model']['relationships'][$name] = [
+                            $type => [$field['morphName']]
+                        ];
+                    } else {
+                        // Simple morphTo - uses relationship name
+                        $output['model']['relationships'][$name] = $type;
+                    }
+                    break;
+
+                case 'morphMany':
+                    $target = $field['target'] . '::class';
+                    $morphName = $field['morphName'];
+
+                    $output['model']['relationships'][$name] = [
+                        $type => [$target, $morphName]
+                    ];
                     break;
             }
         }
