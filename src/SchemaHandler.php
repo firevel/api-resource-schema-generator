@@ -202,7 +202,7 @@ class SchemaHandler extends BaseGenerator
         if (empty($field['required']) && !$autoSet) {
             $migration['nullable'] = null;
         }
-        if (!empty($field['index'])) {
+        if (!empty($field['index']) && !$autoSet) {
             switch ($field['index']) {
                 case 'index':
                     $migration['index'] = null;
