@@ -25,6 +25,12 @@ class SchemaHandler extends BaseGenerator
         $this->addMigrations($resource);
         $this->addRequests($resource);
         $this->addRelationships($resource);
+
+        // If we're part of a meta-pipeline, collect the schema
+        if ($this->context()->isMetaPipeline()) {
+            $this->context()->push('schemas', $resource->output);
+            $this->logger()->info("# Schema collected: {$resource->name}");
+        }
     }
 
     public function addFillables($resource)
