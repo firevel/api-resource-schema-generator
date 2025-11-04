@@ -12,6 +12,21 @@ class SaveFile extends BaseGenerator
         $resource = $this->resource();
         $path = $this->logger()->ask('Set output file path', 'schemas/api-resources/' . $resource->name . '/schema.json');
 
+        // Check if file exists and ask user what to do
+        if (file_exists($path)) {
+            $action = $this->logger()->ask('File already exists. What would you like to do?', 'overwrite', ['overwrite', 'skip', 'cancel']);
+
+            if ($action === 'cancel') {
+                $this->logger()->info('Operation cancelled');
+                return;
+            }
+
+            if ($action === 'skip') {
+                $this->logger()->info('Skipped: ' . $path);
+                return;
+            }
+        }
+
         // Create directory if it doesn't exist
         $dir = dirname($path);
         if (!is_dir($dir) && !empty($dir) && $dir !== '.') {
