@@ -18,7 +18,7 @@ class SchemaConsolidatorGenerator extends BaseGenerator
         }
 
         // Default path for consolidated schemas file
-        $defaultPath = 'schemas/resources.json';
+        $defaultPath = 'schemas/app.json';
 
         // Ask for custom path (using ask if available in logger, otherwise use default)
         if (method_exists($this->logger(), 'ask')) {
