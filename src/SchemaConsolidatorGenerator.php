@@ -43,10 +43,10 @@ class SchemaConsolidatorGenerator extends BaseGenerator
             }
 
             if ($action === 'override') {
-                // Load existing file and merge resources
+                // Load existing file and merge with existing resources
                 $existingData = json_decode(file_get_contents($path), true);
                 if (isset($existingData['resources']) && is_array($existingData['resources'])) {
-                    $schemas = $this->mergeResources($existingData['resources'], $schemas);
+                    $schemas = $this->mergeSchemas($existingData['resources'], $schemas);
                     $this->logger()->info('Merging with existing resources');
                 }
             }
@@ -72,30 +72,30 @@ class SchemaConsolidatorGenerator extends BaseGenerator
     }
 
     /**
-     * Merge existing resources with new resources, overriding by resource name
+     * Merge existing schemas with new schemas, overriding by schema name
      *
-     * @param array $existingResources
-     * @param array $newResources
+     * @param array $existingSchemas
+     * @param array $newSchemas
      * @return array
      */
-    protected function mergeResources(array $existingResources, array $newResources): array
+    protected function mergeSchemas(array $existingSchemas, array $newSchemas): array
     {
-        // Create a map of existing resources by name
-        $resourceMap = [];
-        foreach ($existingResources as $resource) {
-            if (isset($resource['name'])) {
-                $resourceMap[$resource['name']] = $resource;
+        // Create a map of existing schemas by name
+        $schemaMap = [];
+        foreach ($existingSchemas as $schema) {
+            if (isset($schema['name'])) {
+                $schemaMap[$schema['name']] = $schema;
             }
         }
 
-        // Override with new resources
-        foreach ($newResources as $resource) {
-            if (isset($resource['name'])) {
-                $resourceMap[$resource['name']] = $resource;
+        // Override with new schemas
+        foreach ($newSchemas as $schema) {
+            if (isset($schema['name'])) {
+                $schemaMap[$schema['name']] = $schema;
             }
         }
 
         // Return as indexed array
-        return array_values($resourceMap);
+        return array_values($schemaMap);
     }
 }

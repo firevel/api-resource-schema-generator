@@ -34,11 +34,11 @@ class ApiResourceSchemaServiceProvider extends ServiceProvider
                 'api-resource-schemas',
                 [
                     [
-                        'scope' => 'resources.*',
+                        'scope' => 'schemas.*',
                         'pipeline' => 'api-resource-schema',
                     ],
                     [
-                        'scope' => 'resources',
+                        'scope' => 'schemas',
                         'pipeline' => 'schemas-consolidate',
                     ],
                 ]
