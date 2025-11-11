@@ -53,9 +53,11 @@ class SchemaConsolidatorGenerator extends BaseGenerator
         }
 
         // Build the consolidated output structure
-        $output = [
-            'resources' => $schemas,
-        ];
+        // Start with all data from input resource
+        $output = $this->resource()->all();
+
+        // Add the resources (processed schemas)
+        $output['resources'] = $schemas;
 
         // Create directory if it doesn't exist
         $dir = dirname($path);
