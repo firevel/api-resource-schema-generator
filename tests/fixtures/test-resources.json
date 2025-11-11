@@ -1,0 +1,32 @@
+{
+  "version": "1.0.0",
+  "metadata": {
+    "author": "Test",
+    "created": "2025-01-01"
+  },
+  "schemas": [
+    {
+      "name": "post",
+      "fields": [
+        {
+          "name": "id",
+          "type": "increments",
+          "fillable": false,
+          "sortable": true,
+          "transform": true,
+          "filterable": true
+        },
+        {
+          "name": "title",
+          "type": "string",
+          "fillable": true,
+          "sortable": true,
+          "transform": true,
+          "filterable": true
+        }
+      ],
+      "indexes": [],
+      "relationships": []
+    }
+  ]
+}
