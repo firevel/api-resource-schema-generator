@@ -53,8 +53,8 @@ class SchemaConsolidatorGenerator extends BaseGenerator
         }
 
         // Build the consolidated output structure
-        // Start with all data from input resource
-        $output = $this->resource()->all();
+        // Start with all data from the full input (before scoping)
+        $output = $this->input() ? $this->input()->all() : [];
 
         // Add the resources (processed schemas)
         $output['resources'] = $schemas;
