@@ -1,0 +1,21 @@
+name: CI
+
+on: [push]
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v3
+      - run: echo "The ${{ github.repository }} repository has been cloned to the runner."
+      - name: Installing dependencies
+        uses: php-actions/composer@v6
+        with:
+          php_version: 8.4
+      - name: Running unit test
+        uses: php-actions/phpunit@v3
+        with:
+          test_suffix: Test.php
+          version: 10.5
+          php_version: 8.4
