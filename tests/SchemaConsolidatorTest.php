@@ -56,6 +56,9 @@ class SchemaConsolidatorTest extends TestCase
         $resource = new Resource($inputData);
         $context = new PipelineContext();
 
+        // Set the full input in context (simulates what the pipeline does)
+        $context->set('input', new Resource($inputData));
+
         // Simulate processed schemas (what SchemaHandler would produce)
         $processedSchemas = [
             [
@@ -167,6 +170,9 @@ class SchemaConsolidatorTest extends TestCase
         $resource = new Resource($inputData);
         $context = new PipelineContext();
 
+        // Set the full input in context (simulates what the pipeline does)
+        $context->set('input', new Resource($inputData));
+
         // Processed schemas with updated 'post' resource
         $processedSchemas = [
             [
@@ -246,6 +252,9 @@ class SchemaConsolidatorTest extends TestCase
         // Create resource and context
         $resource = new Resource($inputData);
         $context = new PipelineContext();
+
+        // Set the full input in context (simulates what the pipeline does)
+        $context->set('input', new Resource($inputData));
 
         // Minimal processed schema
         $processedSchemas = [
