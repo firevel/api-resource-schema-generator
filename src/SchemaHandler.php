@@ -177,6 +177,7 @@ class SchemaHandler extends BaseGenerator
                 break;
             case 'integer':
             case 'decimal':
+            case 'float':
             case 'date':
             case 'uuid':
             case 'string':
@@ -230,6 +231,7 @@ class SchemaHandler extends BaseGenerator
             'increments' => 'integer',
             'integer' => 'integer',
             'decimal' => 'numeric',
+            'float' => 'numeric',
             'date' => 'date',
             'datetime' => 'date',
             'timestamp' => 'date',
@@ -367,6 +369,7 @@ class SchemaHandler extends BaseGenerator
             'increments' => 'id',
             'integer' => 'integer',
             'decimal' => 'integer',
+            'float' => 'integer',
             'date' => 'date',
             'datetime' => 'datetime',
             'timestamp' => 'datetime',
