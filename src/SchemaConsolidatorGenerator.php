@@ -43,11 +43,21 @@ class SchemaConsolidatorGenerator extends BaseGenerator
             }
 
             if ($action === 'override') {
-                // Load existing file and merge with existing resources
+                // Load existing file and merge all fields
                 $existingData = json_decode(file_get_contents($path), true);
-                if (isset($existingData['resources']) && is_array($existingData['resources'])) {
-                    $schemas = $this->mergeSchemas($existingData['resources'], $schemas);
-                    $this->logger()->info('Merging with existing resources');
+                if (is_array($existingData)) {
+                    // Merge resources array using name-based merge
+                    if (isset($existingData['resources']) && is_array($existingData['resources'])) {
+                        $schemas = $this->mergeSchemas($existingData['resources'], $schemas);
+                    }
+                    // Start with existing file, overlay new input (new input takes precedence)
+                    $newInput = $this->input() ? $this->input()->all() : [];
+                    $output = array_merge($existingData, $newInput);
+                    $output['resources'] = $schemas;
+                    $this->logger()->info('Merging with existing file');
+
+                    $this->writeOutput($path, $output, count($schemas));
+                    return;
                 }
             }
         }
@@ -59,6 +69,19 @@ class SchemaConsolidatorGenerator extends BaseGenerator
         // Add the resources (processed schemas)
         $output['resources'] = $schemas;
 
+        $this->writeOutput($path, $output, count($schemas));
+    }
+
+    /**
+     * Write the consolidated output to file
+     *
+     * @param string $path
+     * @param array $output
+     * @param int $schemaCount
+     * @return void
+     */
+    protected function writeOutput(string $path, array $output, int $schemaCount): void
+    {
         // Create directory if it doesn't exist
         $dir = dirname($path);
         if (!is_dir($dir) && !empty($dir) && $dir !== '.') {
@@ -70,7 +93,7 @@ class SchemaConsolidatorGenerator extends BaseGenerator
 
         $this->logger()->info("# Consolidated schemas file generated");
         $this->logger()->info("- File: {$path}");
-        $this->logger()->info("- Schemas: " . count($schemas));
+        $this->logger()->info("- Schemas: " . $schemaCount);
     }
 
     /**

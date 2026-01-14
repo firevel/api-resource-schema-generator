@@ -231,6 +231,204 @@ class SchemaConsolidatorTest extends TestCase
     }
 
     /** @test */
+    public function it_merges_all_top_level_fields_from_existing_file_on_override()
+    {
+        // Create initial file with service and other extra fields
+        $outputPath = $this->tempPath . '/output.json';
+        $existingData = [
+            'service' => [
+                'name' => 'MyService',
+                'version' => '1.0.0'
+            ],
+            'customField' => 'existingValue',
+            'resources' => [
+                [
+                    'name' => 'user',
+                    'model' => ['fillable' => ['name', 'email']]
+                ]
+            ]
+        ];
+        file_put_contents($outputPath, json_encode($existingData, JSON_PRETTY_PRINT));
+
+        // New input with only schemas (no service key)
+        $inputData = [
+            'schemas' => [
+                [
+                    'name' => 'post',
+                    'fields' => [],
+                    'indexes' => [],
+                    'relationships' => []
+                ]
+            ]
+        ];
+
+        // Create resource and context
+        $resource = new Resource($inputData);
+        $context = new PipelineContext();
+        $context->set('input', new Resource($inputData));
+
+        // Processed schemas
+        $processedSchemas = [
+            [
+                'name' => 'post',
+                'model' => ['fillable' => ['title']]
+            ]
+        ];
+        $context->set('schemas', $processedSchemas);
+
+        // Create a mock logger that returns 'override'
+        $logger = new class($outputPath) {
+            private $outputPath;
+
+            public function __construct($outputPath)
+            {
+                $this->outputPath = $outputPath;
+            }
+
+            public function info($message) {}
+
+            public function ask($question, $default, $options = null)
+            {
+                if (strpos($question, 'output file path') !== false) {
+                    return $this->outputPath;
+                }
+                return 'override';
+            }
+        };
+
+        // Create and run the consolidator
+        $consolidator = new SchemaConsolidatorGenerator($resource, $context);
+        $consolidator->setLogger($logger);
+        $consolidator->handle();
+
+        // Read and verify output
+        $output = json_decode(file_get_contents($outputPath), true);
+
+        // Verify service from existing file is preserved
+        $this->assertArrayHasKey('service', $output);
+        $this->assertEquals('MyService', $output['service']['name']);
+        $this->assertEquals('1.0.0', $output['service']['version']);
+
+        // Verify custom field from existing file is preserved
+        $this->assertArrayHasKey('customField', $output);
+        $this->assertEquals('existingValue', $output['customField']);
+
+        // Verify resources were merged
+        $this->assertCount(2, $output['resources']);
+
+        $resourcesByName = [];
+        foreach ($output['resources'] as $resource) {
+            $resourcesByName[$resource['name']] = $resource;
+        }
+
+        // Verify 'user' from existing file was preserved
+        $this->assertArrayHasKey('user', $resourcesByName);
+        $this->assertEquals(['name', 'email'], $resourcesByName['user']['model']['fillable']);
+
+        // Verify 'post' from new input was added
+        $this->assertArrayHasKey('post', $resourcesByName);
+        $this->assertEquals(['title'], $resourcesByName['post']['model']['fillable']);
+    }
+
+    /** @test */
+    public function it_merges_extra_fields_from_new_input_on_override()
+    {
+        // Create initial file with service
+        $outputPath = $this->tempPath . '/output.json';
+        $existingData = [
+            'service' => [
+                'name' => 'MyService'
+            ],
+            'resources' => [
+                [
+                    'name' => 'user',
+                    'model' => ['fillable' => ['name']]
+                ]
+            ]
+        ];
+        file_put_contents($outputPath, json_encode($existingData, JSON_PRETTY_PRINT));
+
+        // New input with additional top-level fields
+        $inputData = [
+            'newField' => 'newValue',
+            'anotherField' => ['nested' => 'data'],
+            'schemas' => [
+                [
+                    'name' => 'comment',
+                    'fields' => [],
+                    'indexes' => [],
+                    'relationships' => []
+                ]
+            ]
+        ];
+
+        // Create resource and context
+        $resource = new Resource($inputData);
+        $context = new PipelineContext();
+        $context->set('input', new Resource($inputData));
+
+        // Processed schemas
+        $processedSchemas = [
+            [
+                'name' => 'comment',
+                'model' => ['fillable' => ['body']]
+            ]
+        ];
+        $context->set('schemas', $processedSchemas);
+
+        // Create a mock logger that returns 'override'
+        $logger = new class($outputPath) {
+            private $outputPath;
+
+            public function __construct($outputPath)
+            {
+                $this->outputPath = $outputPath;
+            }
+
+            public function info($message) {}
+
+            public function ask($question, $default, $options = null)
+            {
+                if (strpos($question, 'output file path') !== false) {
+                    return $this->outputPath;
+                }
+                return 'override';
+            }
+        };
+
+        // Create and run the consolidator
+        $consolidator = new SchemaConsolidatorGenerator($resource, $context);
+        $consolidator->setLogger($logger);
+        $consolidator->handle();
+
+        // Read and verify output
+        $output = json_decode(file_get_contents($outputPath), true);
+
+        // Verify service from existing file is preserved
+        $this->assertArrayHasKey('service', $output);
+        $this->assertEquals('MyService', $output['service']['name']);
+
+        // Verify new fields from input are added
+        $this->assertArrayHasKey('newField', $output);
+        $this->assertEquals('newValue', $output['newField']);
+
+        $this->assertArrayHasKey('anotherField', $output);
+        $this->assertEquals(['nested' => 'data'], $output['anotherField']);
+
+        // Verify resources were merged
+        $this->assertCount(2, $output['resources']);
+
+        $resourcesByName = [];
+        foreach ($output['resources'] as $resource) {
+            $resourcesByName[$resource['name']] = $resource;
+        }
+
+        // Verify both resources exist
+        $this->assertArrayHasKey('user', $resourcesByName);
+        $this->assertArrayHasKey('comment', $resourcesByName);
+    }
+
+    /** @test */
     public function it_includes_all_input_keys_in_output()
     {
         // Create input with multiple top-level keys
