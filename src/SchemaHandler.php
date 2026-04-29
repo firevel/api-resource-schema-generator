@@ -51,7 +51,7 @@ class SchemaHandler extends BaseGenerator
         $output = $resource->output;
         $output['model']['attributes'] = [];
         foreach ($resource->fields as $field) {
-            if (!empty($field['default'])) {
+            if (array_key_exists('default', $field) && $field['default'] !== null) {
                 $output['model']['attributes'][$field['name']] = $field['default'];
             }
         }
@@ -105,12 +105,13 @@ class SchemaHandler extends BaseGenerator
 
             foreach ($resource->relationships as $field) {
                 if (!empty($field['transform'])) {
-                    if (empty($field['transformer'])) {
-                        $tranformerName = Str::studly(Str::singular($field['name'])) . 'Transformer';
+                    if (!empty($field['transformer'])) {
+                        $transformerName = $field['transformer'];
                     } else {
-                        $tranformerName = $field['transformer'];
+                        $source = !empty($field['target']) ? $field['target'] : $field['name'];
+                        $transformerName = Str::studly(Str::singular($source)) . 'Transformer';
                     }
-                    $availableIncludes[Str::kebab($field['name'])] = $tranformerName;
+                    $availableIncludes[Str::kebab($field['name'])] = $transformerName;
                 }
             }
             if (count($availableIncludes) > 0) {
@@ -128,7 +129,12 @@ class SchemaHandler extends BaseGenerator
         $output['model']['filterable'] = [];
         foreach ($resource->fields as $field) {
             if (!empty($field['filterable'])) {
-                $output['model']['filterable'][$field['name']] = $this->getFilterableByType($field['type']);
+                $filterable = $this->getFilterableByType($field['type']);
+                if ($filterable === null) {
+                    $this->logger()->warn("Skipping filterable for '{$field['name']}': unknown type '{$field['type']}'");
+                    continue;
+                }
+                $output['model']['filterable'][$field['name']] = $filterable;
             }
         }
         $resource->output = $output;
@@ -149,8 +155,8 @@ class SchemaHandler extends BaseGenerator
             foreach ($resource->indexes as $index) {
                 $indexDefinition = [
                     $index['type'] => !empty($index['name'])
-                        ? [$index['fields'], $index['name']]
-                        : [$index['fields']]
+                        ? [$index['columns'], $index['name']]
+                        : [$index['columns']]
                 ];
 
                 $output['migrations']['index'][] = $indexDefinition;
@@ -282,7 +288,7 @@ class SchemaHandler extends BaseGenerator
                 if (!empty($field['editable'])) {
                     $rule = $types[$field['type']];
                     if (empty($field['required'])) {
-                        $rule .= "sometimes|nullable";
+                        $rule .= "|sometimes|nullable";
                     }
                     $output['requests']['update']['rules'][$field['name']] = $rule;
                 }
@@ -327,14 +333,7 @@ class SchemaHandler extends BaseGenerator
                         ? $field['target'] . '::class'
                         : Str::studly(Str::singular($field['name'])) . '::class';
 
-                    $params = [$target];
-
-                    // Add foreignKey as pivot table name if provided
-                    if (!empty($field['foreignKey'])) {
-                        $params[] = $field['foreignKey'];
-                    }
-
-                    $output['model']['relationships'][$name] = [$type => $params];
+                    $output['model']['relationships'][$name] = [$type => [$target]];
                     break;
 
                 case 'morphTo':
@@ -383,9 +382,6 @@ class SchemaHandler extends BaseGenerator
             'object' => 'json',
             'array' => 'array',
         ];
-        if (empty($types[$type])) {
-            throw new \Exception("Missing match for filterable " . $type);
-        }
-        return $types[$type];
+        return $types[$type] ?? null;
     }
 }
