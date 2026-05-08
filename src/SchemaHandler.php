@@ -153,10 +153,13 @@ class SchemaHandler extends BaseGenerator
         if (!empty($resource->indexes)) {
             $output['migrations']['index'] = [];
             foreach ($resource->indexes as $index) {
+                // Canonical key is `fields`; `columns` is accepted for back-compat with legacy inputs.
+                $fields = $index['fields'] ?? $index['columns'];
+
                 $indexDefinition = [
                     $index['type'] => !empty($index['name'])
-                        ? [$index['columns'], $index['name']]
-                        : [$index['columns']]
+                        ? [$fields, $index['name']]
+                        : [$fields]
                 ];
 
                 $output['migrations']['index'][] = $indexDefinition;
