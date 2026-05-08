@@ -337,6 +337,23 @@ class SchemaHandler extends BaseGenerator
                         : Str::studly(Str::singular($field['name'])) . '::class';
 
                     $output['model']['relationships'][$name] = [$type => [$target]];
+
+                    // Emit pivot migration for every belongsToMany. Dedupe across
+                    // bi-directional declarations is the downstream generator's job.
+                    $rawTarget = !empty($field['target']) ? $field['target'] : $field['name'];
+                    $thisSingular = Str::singular(Str::snake($resource->name));
+                    $targetSingular = Str::singular(Str::snake(str_replace('-', '_', $rawTarget)));
+
+                    $pivotNames = [$thisSingular, $targetSingular];
+                    sort($pivotNames);
+
+                    $output['migrations']['pivot'][] = [
+                        'table' => implode('_', $pivotNames),
+                        'fields' => [
+                            ['name' => $pivotNames[0] . '_id', 'type' => 'id'],
+                            ['name' => $pivotNames[1] . '_id', 'type' => 'id'],
+                        ],
+                    ];
                     break;
 
                 case 'morphTo':
