@@ -20,6 +20,7 @@ class SchemaHandler extends BaseGenerator
         $this->addDefaults($resource);
         $this->addSortable($resource);
         $this->addSearchable($resource);
+        $this->addSoftDeletes($resource);
         $this->addTransformer($resource);
         $this->addFilterables($resource);
         $this->addMigrations($resource);
@@ -68,6 +69,9 @@ class SchemaHandler extends BaseGenerator
                 $output['model']['sortable'][] = $field['name'];
             }
         }
+        if (count($output['model']['sortable']) > 0) {
+            $this->requirePackage('firevel/sortable', '*');
+        }
         $resource->output = $output;
         return $resource;
     }
@@ -86,6 +90,27 @@ class SchemaHandler extends BaseGenerator
                 $output['model']['use'] = [];
             }
             $output['model']['use']['Searchable'] = 'Laravel\Scout\Searchable';
+            $this->requirePackage('laravel/scout', '*');
+        }
+        $resource->output = $output;
+        return $resource;
+    }
+
+    public function addSoftDeletes($resource)
+    {
+        $output = $resource->output;
+        foreach ($resource->fields as $field) {
+            $name = $field['name'] ?? null;
+            $type = $field['type'] ?? null;
+            if ($name === 'deleted_at' && in_array($type, ['timestamp', 'datetime'], true)) {
+                if (empty($output['model']['use'])) {
+                    $output['model']['use'] = [];
+                }
+                if (!isset($output['model']['use']['SoftDeletes'])) {
+                    $output['model']['use']['SoftDeletes'] = 'Illuminate\Database\Eloquent\SoftDeletes';
+                }
+                break;
+            }
         }
         $resource->output = $output;
         return $resource;
@@ -136,6 +161,9 @@ class SchemaHandler extends BaseGenerator
                 }
                 $output['model']['filterable'][$field['name']] = $filterable;
             }
+        }
+        if (count($output['model']['filterable']) > 0) {
+            $this->requirePackage('firevel/filterable', '*');
         }
         $resource->output = $output;
         return $resource;
