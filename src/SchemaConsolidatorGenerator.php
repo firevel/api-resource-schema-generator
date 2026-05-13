@@ -54,6 +54,7 @@ class SchemaConsolidatorGenerator extends BaseGenerator
                     $newInput = $this->input() ? $this->input()->all() : [];
                     $output = array_merge($existingData, $newInput);
                     $output['resources'] = $schemas;
+                    $output = $this->mergeGeneratorRequires($output);
                     $this->logger()->info('Merging with existing file');
 
                     $this->writeOutput($path, $output, count($schemas));
@@ -69,7 +70,42 @@ class SchemaConsolidatorGenerator extends BaseGenerator
         // Add the resources (processed schemas)
         $output['resources'] = $schemas;
 
+        $output = $this->mergeGeneratorRequires($output);
+
         $this->writeOutput($path, $output, count($schemas));
+    }
+
+    /**
+     * Merge generator-pushed Composer requires from PipelineContext into the
+     * consolidated output's top-level `require` key, so downstream pipelines
+     * (which see a fresh context per `firevel:generate` invocation) can pick
+     * them up via input.require.
+     *
+     * Precedence: explicit input value wins; '*' from any source defers to a
+     * concrete version from another source.
+     */
+    protected function mergeGeneratorRequires(array $output): array
+    {
+        $generatorRequires = (array) $this->context()->get('composer_requires', []);
+        if (empty($generatorRequires)) {
+            return $output;
+        }
+
+        $existing = (array) ($output['require'] ?? []);
+        foreach ($generatorRequires as $package => $version) {
+            // Existing concrete version wins over incoming '*'.
+            if (isset($existing[$package]) && $existing[$package] !== '*' && $version === '*') {
+                continue;
+            }
+            // Write when nothing set, or when existing is '*' (defer to concrete).
+            if (!isset($existing[$package]) || $existing[$package] === '*') {
+                $existing[$package] = $version;
+            }
+        }
+        ksort($existing);
+        $output['require'] = $existing;
+
+        return $output;
     }
 
     /**

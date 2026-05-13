@@ -505,4 +505,118 @@ class SchemaConsolidatorTest extends TestCase
         $this->assertArrayHasKey('resources', $output);
         $this->assertCount(1, $output['resources']);
     }
+
+    /** @test */
+    public function it_merges_generator_composer_requires_into_top_level_require()
+    {
+        $inputData = ['name' => 'app'];
+        $resource = new Resource($inputData);
+        $context = new PipelineContext();
+        $context->set('input', new Resource($inputData));
+        $context->set('schemas', [['name' => 'post']]);
+        $context->set('composer_requires', [
+            'laravel/scout' => '*',
+            'firevel/sortable' => '*',
+        ]);
+
+        $outputPath = $this->tempPath . '/output.json';
+        $logger = $this->makeAskLogger($outputPath);
+
+        $consolidator = new SchemaConsolidatorGenerator($resource, $context);
+        $consolidator->setLogger($logger);
+        $consolidator->handle();
+
+        $output = json_decode(file_get_contents($outputPath), true);
+
+        $this->assertArrayHasKey('require', $output);
+        $this->assertSame('*', $output['require']['laravel/scout']);
+        $this->assertSame('*', $output['require']['firevel/sortable']);
+    }
+
+    /** @test */
+    public function existing_concrete_require_wins_over_generator_star()
+    {
+        $inputData = [
+            'name' => 'app',
+            'require' => ['laravel/scout' => '^10.0'],
+        ];
+        $resource = new Resource($inputData);
+        $context = new PipelineContext();
+        $context->set('input', new Resource($inputData));
+        $context->set('schemas', [['name' => 'post']]);
+        $context->set('composer_requires', ['laravel/scout' => '*']);
+
+        $outputPath = $this->tempPath . '/output.json';
+        $logger = $this->makeAskLogger($outputPath);
+
+        $consolidator = new SchemaConsolidatorGenerator($resource, $context);
+        $consolidator->setLogger($logger);
+        $consolidator->handle();
+
+        $output = json_decode(file_get_contents($outputPath), true);
+
+        $this->assertSame('^10.0', $output['require']['laravel/scout']);
+    }
+
+    /** @test */
+    public function generator_concrete_replaces_existing_star()
+    {
+        $inputData = [
+            'name' => 'app',
+            'require' => ['laravel/scout' => '*'],
+        ];
+        $resource = new Resource($inputData);
+        $context = new PipelineContext();
+        $context->set('input', new Resource($inputData));
+        $context->set('schemas', [['name' => 'post']]);
+        $context->set('composer_requires', ['laravel/scout' => '^10.0']);
+
+        $outputPath = $this->tempPath . '/output.json';
+        $logger = $this->makeAskLogger($outputPath);
+
+        $consolidator = new SchemaConsolidatorGenerator($resource, $context);
+        $consolidator->setLogger($logger);
+        $consolidator->handle();
+
+        $output = json_decode(file_get_contents($outputPath), true);
+
+        $this->assertSame('^10.0', $output['require']['laravel/scout']);
+    }
+
+    /** @test */
+    public function no_generator_requires_does_not_introduce_require_key()
+    {
+        $inputData = ['name' => 'app'];
+        $resource = new Resource($inputData);
+        $context = new PipelineContext();
+        $context->set('input', new Resource($inputData));
+        $context->set('schemas', [['name' => 'post']]);
+
+        $outputPath = $this->tempPath . '/output.json';
+        $logger = $this->makeAskLogger($outputPath);
+
+        $consolidator = new SchemaConsolidatorGenerator($resource, $context);
+        $consolidator->setLogger($logger);
+        $consolidator->handle();
+
+        $output = json_decode(file_get_contents($outputPath), true);
+
+        $this->assertArrayNotHasKey('require', $output);
+    }
+
+    protected function makeAskLogger(string $outputPath)
+    {
+        return new class($outputPath) {
+            private $outputPath;
+            public function __construct($outputPath) { $this->outputPath = $outputPath; }
+            public function info($message) {}
+            public function ask($question, $default, $options = null)
+            {
+                if (strpos($question, 'output file path') !== false) {
+                    return $this->outputPath;
+                }
+                return 'overwrite';
+            }
+        };
+    }
 }
