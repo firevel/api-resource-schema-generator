@@ -8,6 +8,11 @@ use Illuminate\Support\Str;
 
 class SchemaHandler extends BaseGenerator
 {
+    public static function description(): string
+    {
+        return 'Transform a prompt-style resource schema (fields + relationships + indexes) into the generator-ready output structure with model config, transformer, migrations, and requests.';
+    }
+
     public function handle()
     {
         $resource = $this->resource();

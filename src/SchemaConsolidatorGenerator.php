@@ -7,6 +7,11 @@ use Firevel\Generator\Resource;
 
 class SchemaConsolidatorGenerator extends BaseGenerator
 {
+    public static function description(): string
+    {
+        return 'Consolidate processed schemas (and accumulated composer requires) into schemas/app.json, suitable for chaining into generic-app / appengine-app.';
+    }
+
     public function handle()
     {
         // Get all collected schemas from context
@@ -17,49 +22,63 @@ class SchemaConsolidatorGenerator extends BaseGenerator
             return;
         }
 
-        // Default path for consolidated schemas file
         $defaultPath = 'schemas/app.json';
+        $headless = $this->isDryRun() || $this->shouldSkipExisting();
 
-        // Ask for custom path (using ask if available in logger, otherwise use default)
-        if (method_exists($this->logger(), 'ask')) {
-            $path = $this->logger()->ask('Set output file path for consolidated schemas', $defaultPath);
-        } else {
-            $path = $defaultPath;
-            $this->logger()->info("# Using default path: {$path}");
-        }
+        // Resolution order for the output path:
+        //   1. context `output_path` — set by callers (tests, programmatic use)
+        //   2. resource `output_path` attribute — set in the input JSON
+        //   3. interactive prompt — only when we're in a real CLI session
+        //   4. hardcoded default — when running headless without injection
+        $path = $this->context()->get('output_path')
+            ?? $this->resource()->get('output_path')
+            ?? ($headless
+                ? $defaultPath
+                : (string) $this->logger()->ask('Set output file path for consolidated schemas', $defaultPath));
 
-        // Check if file exists and ask user what to do
-        if (file_exists($path)) {
-            $action = $this->logger()->ask('File already exists. What would you like to do?', 'override', ['overwrite', 'override', 'skip', 'cancel']);
+        $pathPreSet = $this->context()->has('output_path')
+            || $this->resource()->has('output_path');
+
+        // Interactive merge prompt fires only in genuine CLI sessions with no
+        // up-front decision. `context.merge_existing` (bool) forces the merge
+        // path for programmatic / test use.
+        $shouldMergeWithExisting = (bool) $this->context()->get('merge_existing', false);
+        $interactivePromptApplies = !$headless && !$pathPreSet && !$shouldMergeWithExisting;
+
+        if ($interactivePromptApplies && file_exists($path)) {
+            $action = (string) $this->logger()->ask(
+                'File already exists. What would you like to do?',
+                'override',
+                ['overwrite', 'override', 'skip', 'cancel']
+            );
 
             if ($action === 'cancel') {
                 $this->logger()->info('Operation cancelled');
                 return;
             }
-
             if ($action === 'skip') {
                 $this->logger()->info('Skipped: ' . $path);
                 return;
             }
-
             if ($action === 'override') {
-                // Load existing file and merge all fields
-                $existingData = json_decode(file_get_contents($path), true);
-                if (is_array($existingData)) {
-                    // Merge resources array using name-based merge
-                    if (isset($existingData['resources']) && is_array($existingData['resources'])) {
-                        $schemas = $this->mergeSchemas($existingData['resources'], $schemas);
-                    }
-                    // Start with existing file, overlay new input (new input takes precedence)
-                    $newInput = $this->input() ? $this->input()->all() : [];
-                    $output = array_merge($existingData, $newInput);
-                    $output['resources'] = $schemas;
-                    $output = $this->mergeGeneratorRequires($output);
-                    $this->logger()->info('Merging with existing file');
+                $shouldMergeWithExisting = true;
+            }
+        }
 
-                    $this->writeOutput($path, $output, count($schemas));
-                    return;
+        if ($shouldMergeWithExisting) {
+            $existingData = json_decode(file_get_contents($path), true);
+            if (is_array($existingData)) {
+                if (isset($existingData['resources']) && is_array($existingData['resources'])) {
+                    $schemas = $this->mergeSchemas($existingData['resources'], $schemas);
                 }
+                $newInput = $this->input() ? $this->input()->all() : [];
+                $output = array_merge($existingData, $newInput);
+                $output['resources'] = $schemas;
+                $output = $this->mergeGeneratorRequires($output);
+                $this->logger()->info('Merging with existing file');
+
+                $this->writeOutput($path, $output, count($schemas));
+                return;
             }
         }
 
@@ -118,14 +137,11 @@ class SchemaConsolidatorGenerator extends BaseGenerator
      */
     protected function writeOutput(string $path, array $output, int $schemaCount): void
     {
-        // Create directory if it doesn't exist
-        $dir = dirname($path);
-        if (!is_dir($dir) && !empty($dir) && $dir !== '.') {
-            mkdir($dir, 0755, true);
-        }
+        $this->createFile($path, json_encode($output, JSON_PRETTY_PRINT));
 
-        // Write the consolidated file
-        file_put_contents($path, json_encode($output, JSON_PRETTY_PRINT));
+        // Expose the consolidated structure so a chained pipeline can consume
+        // it via `--json=@output` (chained context is shared since 0.8).
+        $this->emitOutput($output);
 
         $this->logger()->info("# Consolidated schemas file generated");
         $this->logger()->info("- File: {$path}");

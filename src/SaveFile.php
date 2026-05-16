@@ -3,37 +3,50 @@
 namespace Firevel\ApiResourceSchemaGenerator;
 
 use Firevel\Generator\Generators\BaseGenerator;
-use Firevel\Generator\Resource;
 
 class SaveFile extends BaseGenerator
 {
+    public static function description(): string
+    {
+        return 'Save the processed resource schema as a JSON file under schemas/api-resources/<name>/schema.json.';
+    }
+
     public function handle()
     {
         $resource = $this->resource();
-        $path = $this->logger()->ask('Set output file path', 'schemas/api-resources/' . $resource->name . '/schema.json');
+        $defaultPath = 'schemas/api-resources/' . $resource->name . '/schema.json';
+        $headless = $this->isDryRun() || $this->shouldSkipExisting();
 
-        // Check if file exists and ask user what to do
-        if (file_exists($path)) {
-            $action = $this->logger()->ask('File already exists. What would you like to do?', 'overwrite', ['overwrite', 'skip', 'cancel']);
+        // Resolution order: context `output_path` -> resource `output_path`
+        // -> interactive prompt (CLI only) -> hardcoded default (headless).
+        $path = $this->context()->get('output_path')
+            ?? $resource->get('output_path')
+            ?? ($headless
+                ? $defaultPath
+                : (string) $this->logger()->ask('Set output file path', $defaultPath));
+
+        $pathPreSet = $this->context()->has('output_path') || $resource->has('output_path');
+
+        // Existing-file overwrite/skip/cancel prompt only fires in a real CLI
+        // session with no up-front path decision. Headless / pre-set runs
+        // delegate to createFile() (which honors --skip-existing).
+        if (!$headless && !$pathPreSet && file_exists($path)) {
+            $action = (string) $this->logger()->ask(
+                'File already exists. What would you like to do?',
+                'overwrite',
+                ['overwrite', 'skip', 'cancel']
+            );
 
             if ($action === 'cancel') {
                 $this->logger()->info('Operation cancelled');
                 return;
             }
-
             if ($action === 'skip') {
                 $this->logger()->info('Skipped: ' . $path);
                 return;
             }
         }
 
-        // Create directory if it doesn't exist
-        $dir = dirname($path);
-        if (!is_dir($dir) && !empty($dir) && $dir !== '.') {
-            mkdir($dir, 0755, true);
-        }
-
-        file_put_contents($path, json_encode($resource->output, JSON_PRETTY_PRINT));
-        $this->logger()->info($path . ' generated');
+        $this->createFile($path, json_encode($resource->output, JSON_PRETTY_PRINT));
     }
 }
