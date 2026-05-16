@@ -17,8 +17,9 @@ class SchemaConsolidatorGenerator extends BaseGenerator
         // Get all collected schemas from context
         $schemas = $this->context()->get('schemas', []);
 
+        // Nothing to do — stay silent; the outer pipeline summary covers
+        // the empty-state case.
         if (empty($schemas)) {
-            $this->logger()->info("# No schemas to consolidate");
             return;
         }
 
@@ -53,11 +54,11 @@ class SchemaConsolidatorGenerator extends BaseGenerator
             );
 
             if ($action === 'cancel') {
-                $this->logger()->info('Operation cancelled');
+                $this->logger()->info('cancelled');
                 return;
             }
             if ($action === 'skip') {
-                $this->logger()->info('Skipped: ' . $path);
+                $this->logger()->info("skipped {$path} (user declined)");
                 return;
             }
             if ($action === 'override') {
@@ -75,7 +76,7 @@ class SchemaConsolidatorGenerator extends BaseGenerator
                 $output = array_merge($existingData, $newInput);
                 $output['resources'] = $schemas;
                 $output = $this->mergeGeneratorRequires($output);
-                $this->logger()->info('Merging with existing file');
+                $this->logger()->info("merging with existing {$path}");
 
                 $this->writeOutput($path, $output, count($schemas));
                 return;
@@ -143,9 +144,7 @@ class SchemaConsolidatorGenerator extends BaseGenerator
         // it via `--json=@output` (chained context is shared since 0.8).
         $this->emitOutput($output);
 
-        $this->logger()->info("# Consolidated schemas file generated");
-        $this->logger()->info("- File: {$path}");
-        $this->logger()->info("- Schemas: " . $schemaCount);
+        $this->logger()->info("wrote {$path} ({$schemaCount} schema" . ($schemaCount === 1 ? '' : 's') . ")");
     }
 
     /**

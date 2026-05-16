@@ -38,11 +38,11 @@ class SaveFile extends BaseGenerator
             );
 
             if ($action === 'cancel') {
-                $this->logger()->info('Operation cancelled');
+                $this->logger()->info('cancelled');
                 return;
             }
             if ($action === 'skip') {
-                $this->logger()->info('Skipped: ' . $path);
+                $this->logger()->info("skipped {$path} (user declined)");
                 return;
             }
         }

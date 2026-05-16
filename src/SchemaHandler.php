@@ -35,7 +35,7 @@ class SchemaHandler extends BaseGenerator
         // If we're part of a meta-pipeline, collect the schema
         if ($this->context()->isMetaPipeline()) {
             $this->context()->push('schemas', $resource->output);
-            $this->logger()->info("# Schema collected: {$resource->name}");
+            $this->logger()->info("collected schema: {$resource->name}");
         }
     }
 
