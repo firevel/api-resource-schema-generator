@@ -51,11 +51,37 @@ class ApiResourceSchemaServiceProvider extends ServiceProvider
             ],
         ]);
 
+        // Standalone seeders transformer — translates LLM-format seeders
+        // ($ref / $now / $hash / $uuid) into the generator-level seeder
+        // format. Chainable via @output. Also runs as a step inside the
+        // multi-resource meta-pipeline (see below) when the input also
+        // carries a `seeders` block.
+        $manager->extend('seeders-transform', [
+            'description' => 'Translate LLM-format seeder JSON into the generator-level seeder format consumed by firevel/generator (chainable via @output).',
+            'input_schema' => [
+                'type' => 'object',
+                'required' => ['seeders'],
+                'properties' => [
+                    'seeders' => ['type' => 'object'],
+                    'schemas' => ['type' => 'array'],
+                ],
+            ],
+            'input_error_messages' => [
+                '/seeders' => "Pipeline 'seeders-transform' requires a top-level `seeders` object keyed by set name (e.g. \"system\", \"demo\").",
+            ],
+            'steps' => [
+                'transform' => \Firevel\ApiResourceSchemaGenerator\SeedersTransformerGenerator::class,
+            ],
+        ]);
+
         // Meta-pipeline: iterates `schemas.*` through `api-resource-schema`,
-        // then consolidates. Designed to chain into `generic-app` /
-        // `appengine-app` via `--pipe` / `@output`.
+        // optionally transforms `seeders`, then consolidates. Designed to
+        // chain into `generic-app` / `appengine-app` via `--pipe` /
+        // `@output`. The seeders step is a bare class step (no scoping)
+        // so it sees the full input and silently no-ops when no `seeders`
+        // block is present.
         $manager->extend('api-resource-schemas', [
-            'description' => 'Process multiple prompt-style resource schemas under `schemas.*` and consolidate them into a single descriptor (chainable into `generic-app` / `appengine-app` via `@output`).',
+            'description' => 'Process multiple prompt-style resource schemas under `schemas.*` and consolidate them into a single descriptor (chainable into `generic-app` / `appengine-app` via `@output`). When the input carries a top-level `seeders` block, it is translated alongside.',
             'input_schema' => [
                 'type' => 'object',
                 'required' => ['schemas'],
@@ -64,6 +90,7 @@ class ApiResourceSchemaServiceProvider extends ServiceProvider
                         'type' => 'array',
                         'minItems' => 1,
                     ],
+                    'seeders' => ['type' => 'object'],
                 ],
             ],
             'input_error_messages' => [
@@ -75,6 +102,7 @@ class ApiResourceSchemaServiceProvider extends ServiceProvider
                     'scope' => 'schemas.*',
                     'pipeline' => 'api-resource-schema',
                 ],
+                'seeders' => \Firevel\ApiResourceSchemaGenerator\SeedersTransformerGenerator::class,
                 [
                     'scope' => 'schemas',
                     'pipeline' => 'schemas-consolidate',

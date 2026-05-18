@@ -75,6 +75,7 @@ class SchemaConsolidatorGenerator extends BaseGenerator
                 $newInput = $this->input() ? $this->input()->all() : [];
                 $output = array_merge($existingData, $newInput);
                 $output['resources'] = $schemas;
+                $output = $this->mergeTransformedSeeders($output);
                 $output = $this->mergeGeneratorRequires($output);
                 $this->logger()->info("merging with existing {$path}");
 
@@ -90,9 +91,27 @@ class SchemaConsolidatorGenerator extends BaseGenerator
         // Add the resources (processed schemas)
         $output['resources'] = $schemas;
 
+        $output = $this->mergeTransformedSeeders($output);
         $output = $this->mergeGeneratorRequires($output);
 
         $this->writeOutput($path, $output, count($schemas));
+    }
+
+    /**
+     * Replace the LLM-format `seeders` block (if any) with the
+     * generator-level version that `SeedersTransformerGenerator` pushed
+     * to the shared PipelineContext during this run. Downstream pipelines
+     * see a fresh PipelineContext per `firevel:generate` invocation, so
+     * the transformed seeders have to land in the consolidated JSON to
+     * survive the chain hop.
+     */
+    protected function mergeTransformedSeeders(array $output): array
+    {
+        $transformed = $this->context()->get('transformed_seeders');
+        if (is_array($transformed)) {
+            $output['seeders'] = $transformed;
+        }
+        return $output;
     }
 
     /**
