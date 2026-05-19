@@ -10,7 +10,6 @@ class SeedersTransformerTest extends TestCase
      * Convenience: run the transformer and return the resulting
      * `transformed_seeders` from the shared PipelineContext.
      *
-     * @param array $input  the full pre-scoped input (with `seeders` + optional `schemas`)
      * @return array<string, array<int, mixed>>
      */
     private function transform(array $input): array
@@ -41,9 +40,15 @@ class SeedersTransformerTest extends TestCase
         $out = $this->transform([
             'schemas' => [],
             'seeders' => [
-                'system' => [
-                    'Role' => [
-                        ['_ref' => 'admin', 'name' => 'admin', 'description' => 'Full access'],
+                [
+                    'name' => 'system',
+                    'resources' => [
+                        [
+                            'name' => 'Role',
+                            'rows' => [
+                                ['ref' => 'admin', 'data' => ['name' => 'admin', 'description' => 'Full access']],
+                            ],
+                        ],
                     ],
                 ],
             ],
@@ -62,12 +67,20 @@ class SeedersTransformerTest extends TestCase
         $out = $this->transform([
             'schemas' => [],
             'seeders' => [
-                'demo' => [
-                    'User' => [[
-                        'id' => ['$uuid' => true],
-                        'password' => ['$hash' => 'secret'],
-                        'created_at' => ['$now' => true],
-                    ]],
+                [
+                    'name' => 'demo',
+                    'resources' => [
+                        [
+                            'name' => 'User',
+                            'rows' => [[
+                                'data' => [
+                                    'id' => ['$' => 'uuid'],
+                                    'password' => ['$' => 'hash', 'value' => 'secret'],
+                                    'created_at' => ['$' => 'now'],
+                                ],
+                            ]],
+                        ],
+                    ],
                 ],
             ],
         ]);
@@ -87,12 +100,25 @@ class SeedersTransformerTest extends TestCase
                 $this->schema('User', [$this->pkField(), $this->uniqueField('email')]),
             ],
             'seeders' => [
-                'system' => [
-                    'Role' => [
-                        ['_ref' => 'admin', 'name' => 'admin'],
-                    ],
-                    'User' => [
-                        ['name' => 'John', 'email' => 'john@x.com', 'role_id' => ['$ref' => 'Role.admin']],
+                [
+                    'name' => 'system',
+                    'resources' => [
+                        [
+                            'name' => 'Role',
+                            'rows' => [
+                                ['ref' => 'admin', 'data' => ['name' => 'admin']],
+                            ],
+                        ],
+                        [
+                            'name' => 'User',
+                            'rows' => [
+                                ['data' => [
+                                    'name' => 'John',
+                                    'email' => 'john@x.com',
+                                    'role_id' => ['$' => 'ref', 'resource' => 'Role', 'ref' => 'admin'],
+                                ]],
+                            ],
+                        ],
                     ],
                 ],
             ],
@@ -104,7 +130,6 @@ class SeedersTransformerTest extends TestCase
             $out['system'][0]
         );
 
-        // User's role_id becomes a chained lookup.
         $userRow = $out['system'][1]['App\\Models\\User'];
         $this->assertSame(
             ['App\\Models\\Role' => ['where' => ['name', 'admin'], 'value' => 'id']],
@@ -115,7 +140,7 @@ class SeedersTransformerTest extends TestCase
     /** @test */
     public function topo_sort_reorders_dependent_rows_within_a_set(): void
     {
-        // User row appears BEFORE Role row in input order, but $refs Role.
+        // User resource appears BEFORE Role in input order, but $refs Role.
         // Transformer must reorder so Role gets inserted first.
         $out = $this->transform([
             'schemas' => [
@@ -123,12 +148,25 @@ class SeedersTransformerTest extends TestCase
                 $this->schema('User', [$this->pkField(), $this->uniqueField('email')]),
             ],
             'seeders' => [
-                'system' => [
-                    'User' => [
-                        ['name' => 'John', 'email' => 'john@x.com', 'role_id' => ['$ref' => 'Role.admin']],
-                    ],
-                    'Role' => [
-                        ['_ref' => 'admin', 'name' => 'admin'],
+                [
+                    'name' => 'system',
+                    'resources' => [
+                        [
+                            'name' => 'User',
+                            'rows' => [
+                                ['data' => [
+                                    'name' => 'John',
+                                    'email' => 'john@x.com',
+                                    'role_id' => ['$' => 'ref', 'resource' => 'Role', 'ref' => 'admin'],
+                                ]],
+                            ],
+                        ],
+                        [
+                            'name' => 'Role',
+                            'rows' => [
+                                ['ref' => 'admin', 'data' => ['name' => 'admin']],
+                            ],
+                        ],
                     ],
                 ],
             ],
@@ -152,18 +190,27 @@ class SeedersTransformerTest extends TestCase
                 ]),
             ],
             'seeders' => [
-                'system' => [
-                    'Role' => [
+                [
+                    'name' => 'system',
+                    'resources' => [
                         [
-                            '_ref' => 'admin',
-                            'code' => 'ADMIN',
-                            'slug' => 'admin',
-                            'name' => 'Administrator',
-                            'email' => 'admin@x.com',
+                            'name' => 'Role',
+                            'rows' => [[
+                                'ref' => 'admin',
+                                'data' => [
+                                    'code' => 'ADMIN',
+                                    'slug' => 'admin',
+                                    'name' => 'Administrator',
+                                    'email' => 'admin@x.com',
+                                ],
+                            ]],
                         ],
-                    ],
-                    'OtherTable' => [
-                        ['role_id' => ['$ref' => 'Role.admin']],
+                        [
+                            'name' => 'OtherTable',
+                            'rows' => [
+                                ['data' => ['role_id' => ['$' => 'ref', 'resource' => 'Role', 'ref' => 'admin']]],
+                            ],
+                        ],
                     ],
                 ],
             ],
@@ -187,9 +234,18 @@ class SeedersTransformerTest extends TestCase
                 ]),
             ],
             'seeders' => [
-                'system' => [
-                    'Token' => [['_ref' => 'one', 'token_hash' => 'abc123']],
-                    'Audit' => [['token_id' => ['$ref' => 'Token.one']]],
+                [
+                    'name' => 'system',
+                    'resources' => [
+                        [
+                            'name' => 'Token',
+                            'rows' => [['ref' => 'one', 'data' => ['token_hash' => 'abc123']]],
+                        ],
+                        [
+                            'name' => 'Audit',
+                            'rows' => [['data' => ['token_id' => ['$' => 'ref', 'resource' => 'Token', 'ref' => 'one']]]],
+                        ],
+                    ],
                 ],
             ],
         ]);
@@ -214,26 +270,44 @@ class SeedersTransformerTest extends TestCase
                 ]),
             ],
             'seeders' => [
-                'system' => [
-                    'Role' => [['_ref' => 'a', 'name' => 'a']],
-                    'Other' => [['role_id' => ['$ref' => 'Role.a']]],
+                [
+                    'name' => 'system',
+                    'resources' => [
+                        [
+                            'name' => 'Role',
+                            'rows' => [['ref' => 'a', 'data' => ['name' => 'a']]],
+                        ],
+                        [
+                            'name' => 'Other',
+                            'rows' => [['data' => ['role_id' => ['$' => 'ref', 'resource' => 'Role', 'ref' => 'a']]]],
+                        ],
+                    ],
                 ],
             ],
         ]);
     }
 
     /** @test */
-    public function it_errors_on_dangling_ref_label(): void
+    public function it_errors_on_dangling_ref(): void
     {
         $this->expectException(\InvalidArgumentException::class);
-        $this->expectExceptionMessageMatches('/no matching _ref label/');
+        $this->expectExceptionMessageMatches('/no matching row/');
 
         $this->transform([
             'schemas' => [$this->schema('Role', [$this->pkField(), $this->uniqueField('name')])],
             'seeders' => [
-                'system' => [
-                    'Role' => [['_ref' => 'admin', 'name' => 'admin']],
-                    'Other' => [['role_id' => ['$ref' => 'Role.ghost']]],
+                [
+                    'name' => 'system',
+                    'resources' => [
+                        [
+                            'name' => 'Role',
+                            'rows' => [['ref' => 'admin', 'data' => ['name' => 'admin']]],
+                        ],
+                        [
+                            'name' => 'Other',
+                            'rows' => [['data' => ['role_id' => ['$' => 'ref', 'resource' => 'Role', 'ref' => 'ghost']]]],
+                        ],
+                    ],
                 ],
             ],
         ]);
@@ -251,9 +325,24 @@ class SeedersTransformerTest extends TestCase
                 $this->schema('B', [$this->pkField(), $this->uniqueField('name')]),
             ],
             'seeders' => [
-                'system' => [
-                    'A' => [['_ref' => 'a1', 'name' => 'a', 'b_id' => ['$ref' => 'B.b1']]],
-                    'B' => [['_ref' => 'b1', 'name' => 'b', 'a_id' => ['$ref' => 'A.a1']]],
+                [
+                    'name' => 'system',
+                    'resources' => [
+                        [
+                            'name' => 'A',
+                            'rows' => [['ref' => 'a1', 'data' => [
+                                'name' => 'a',
+                                'b_id' => ['$' => 'ref', 'resource' => 'B', 'ref' => 'b1'],
+                            ]]],
+                        ],
+                        [
+                            'name' => 'B',
+                            'rows' => [['ref' => 'b1', 'data' => [
+                                'name' => 'b',
+                                'a_id' => ['$' => 'ref', 'resource' => 'A', 'ref' => 'a1'],
+                            ]]],
+                        ],
+                    ],
                 ],
             ],
         ]);
@@ -273,28 +362,45 @@ class SeedersTransformerTest extends TestCase
                 ]),
             ],
             'seeders' => [
-                'system' => [
-                    // The natural-key column itself is a directive — unresolvable.
-                    'Token' => [['_ref' => 'one', 'hash' => ['$uuid' => true]]],
-                    'Audit' => [['token_id' => ['$ref' => 'Token.one']]],
+                [
+                    'name' => 'system',
+                    'resources' => [
+                        [
+                            'name' => 'Token',
+                            'rows' => [['ref' => 'one', 'data' => ['hash' => ['$' => 'uuid']]]],
+                        ],
+                        [
+                            'name' => 'Audit',
+                            'rows' => [['data' => ['token_id' => ['$' => 'ref', 'resource' => 'Token', 'ref' => 'one']]]],
+                        ],
+                    ],
                 ],
             ],
         ]);
     }
 
     /** @test */
-    public function it_strips_underscore_ref_labels(): void
+    public function ref_lives_on_row_not_inside_data(): void
     {
+        // The `ref` field is at the row level, not inside `data`. Confirm the
+        // generated output's `data`-derived columns don't contain a `ref` key.
         $out = $this->transform([
             'schemas' => [],
             'seeders' => [
-                'system' => [
-                    'Role' => [['_ref' => 'admin', 'name' => 'admin']],
+                [
+                    'name' => 'system',
+                    'resources' => [
+                        [
+                            'name' => 'Role',
+                            'rows' => [['ref' => 'admin', 'data' => ['name' => 'admin']]],
+                        ],
+                    ],
                 ],
             ],
         ]);
 
-        $this->assertArrayNotHasKey('_ref', $out['system'][0]['App\\Models\\Role']);
+        $this->assertSame(['App\\Models\\Role' => ['name' => 'admin']], $out['system'][0]);
+        $this->assertArrayNotHasKey('ref', $out['system'][0]['App\\Models\\Role']);
     }
 
     /** @test */
@@ -304,8 +410,14 @@ class SeedersTransformerTest extends TestCase
             'service' => ['name' => 'app'],
             'schemas' => [],
             'seeders' => [
-                'system' => [
-                    'Role' => [['_ref' => 'admin', 'name' => 'admin']],
+                [
+                    'name' => 'system',
+                    'resources' => [
+                        [
+                            'name' => 'Role',
+                            'rows' => [['ref' => 'admin', 'data' => ['name' => 'admin']]],
+                        ],
+                    ],
                 ],
             ],
         ]);
@@ -333,9 +445,96 @@ class SeedersTransformerTest extends TestCase
     }
 
     /** @test */
+    public function cross_set_refs_resolve_without_constraining_topo_order(): void
+    {
+        // `demo` row refs a `system` row. The demo row should NOT get re-ordered
+        // (no intra-set dep); the FK lookup is emitted in the output.
+        $out = $this->transform([
+            'schemas' => [
+                $this->schema('Role', [$this->pkField(), $this->uniqueField('name')]),
+                $this->schema('User', [$this->pkField(), $this->uniqueField('email')]),
+            ],
+            'seeders' => [
+                [
+                    'name' => 'system',
+                    'resources' => [
+                        ['name' => 'Role', 'rows' => [['ref' => 'admin', 'data' => ['name' => 'admin']]]],
+                    ],
+                ],
+                [
+                    'name' => 'demo',
+                    'resources' => [
+                        [
+                            'name' => 'User',
+                            'rows' => [['data' => [
+                                'email' => 'a@b.c',
+                                'role_id' => ['$' => 'ref', 'resource' => 'Role', 'ref' => 'admin'],
+                            ]]],
+                        ],
+                    ],
+                ],
+            ],
+        ]);
+
+        $this->assertCount(1, $out['system']);
+        $this->assertCount(1, $out['demo']);
+
+        $this->assertSame(
+            ['App\\Models\\Role' => ['where' => ['name', 'admin'], 'value' => 'id']],
+            $out['demo'][0]['App\\Models\\User']['role_id']
+        );
+    }
+
+    /** @test */
+    public function duplicate_ref_across_rows_is_an_error(): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessageMatches('/duplicate ref/');
+
+        $this->transform([
+            'schemas' => [],
+            'seeders' => [
+                [
+                    'name' => 'system',
+                    'resources' => [
+                        ['name' => 'Role', 'rows' => [['ref' => 'dup', 'data' => ['name' => 'a']]]],
+                    ],
+                ],
+                [
+                    'name' => 'demo',
+                    'resources' => [
+                        ['name' => 'Role', 'rows' => [['ref' => 'dup', 'data' => ['name' => 'b']]]],
+                    ],
+                ],
+            ],
+        ]);
+    }
+
+    /** @test */
+    public function unknown_directive_verb_is_an_error(): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessageMatches('/unknown directive verb/');
+
+        $this->transform([
+            'schemas' => [],
+            'seeders' => [
+                [
+                    'name' => 'system',
+                    'resources' => [
+                        [
+                            'name' => 'Role',
+                            'rows' => [['data' => ['name' => ['$' => 'frobnicate']]]],
+                        ],
+                    ],
+                ],
+            ],
+        ]);
+    }
+
+    /** @test */
     public function worked_example_from_brief_round_trips(): void
     {
-        // Mirrors the LLM brief verbatim and checks each translated piece.
         $out = $this->transform([
             'schemas' => [
                 $this->schema('Role', [$this->pkField(), $this->uniqueField('name')]),
@@ -343,33 +542,62 @@ class SeedersTransformerTest extends TestCase
                 $this->schema('User', [$this->pkField(), $this->uniqueField('email')]),
             ],
             'seeders' => [
-                'system' => [
-                    'Role' => [
-                        ['_ref' => 'admin', 'name' => 'admin', 'description' => 'Full access'],
-                        ['_ref' => 'member', 'name' => 'member', 'description' => 'Standard user'],
-                    ],
-                    'Permission' => [
-                        ['_ref' => 'posts_read', 'name' => 'posts.read'],
-                        ['_ref' => 'posts_write', 'name' => 'posts.write'],
-                    ],
-                    'RolePermission' => [
-                        ['role_id' => ['$ref' => 'Role.admin'], 'permission_id' => ['$ref' => 'Permission.posts_read']],
-                        ['role_id' => ['$ref' => 'Role.admin'], 'permission_id' => ['$ref' => 'Permission.posts_write']],
-                        ['role_id' => ['$ref' => 'Role.member'], 'permission_id' => ['$ref' => 'Permission.posts_read']],
+                [
+                    'name' => 'system',
+                    'resources' => [
+                        [
+                            'name' => 'Role',
+                            'rows' => [
+                                ['ref' => 'admin', 'data' => ['name' => 'admin', 'description' => 'Full access']],
+                                ['ref' => 'member', 'data' => ['name' => 'member', 'description' => 'Standard user']],
+                            ],
+                        ],
+                        [
+                            'name' => 'Permission',
+                            'rows' => [
+                                ['ref' => 'posts_read', 'data' => ['name' => 'posts.read']],
+                                ['ref' => 'posts_write', 'data' => ['name' => 'posts.write']],
+                            ],
+                        ],
+                        [
+                            'name' => 'RolePermission',
+                            'rows' => [
+                                ['data' => [
+                                    'role_id' => ['$' => 'ref', 'resource' => 'Role', 'ref' => 'admin'],
+                                    'permission_id' => ['$' => 'ref', 'resource' => 'Permission', 'ref' => 'posts_read'],
+                                ]],
+                                ['data' => [
+                                    'role_id' => ['$' => 'ref', 'resource' => 'Role', 'ref' => 'admin'],
+                                    'permission_id' => ['$' => 'ref', 'resource' => 'Permission', 'ref' => 'posts_write'],
+                                ]],
+                                ['data' => [
+                                    'role_id' => ['$' => 'ref', 'resource' => 'Role', 'ref' => 'member'],
+                                    'permission_id' => ['$' => 'ref', 'resource' => 'Permission', 'ref' => 'posts_read'],
+                                ]],
+                            ],
+                        ],
                     ],
                 ],
-                'demo' => [
-                    'User' => [[
-                        '_ref' => 'john',
-                        'id' => ['$uuid' => true],
-                        'name' => 'John Doe',
-                        'email' => 'john@example.com',
-                        'password' => ['$hash' => 'password123'],
-                        'role_id' => ['$ref' => 'Role.admin'],
-                        'email_verified_at' => ['$now' => true],
-                        'created_at' => ['$now' => true],
-                        'updated_at' => ['$now' => true],
-                    ]],
+                [
+                    'name' => 'demo',
+                    'resources' => [
+                        [
+                            'name' => 'User',
+                            'rows' => [[
+                                'ref' => 'john',
+                                'data' => [
+                                    'id' => ['$' => 'uuid'],
+                                    'name' => 'John Doe',
+                                    'email' => 'john@example.com',
+                                    'password' => ['$' => 'hash', 'value' => 'password123'],
+                                    'role_id' => ['$' => 'ref', 'resource' => 'Role', 'ref' => 'admin'],
+                                    'email_verified_at' => ['$' => 'now'],
+                                    'created_at' => ['$' => 'now'],
+                                    'updated_at' => ['$' => 'now'],
+                                ],
+                            ]],
+                        ],
+                    ],
                 ],
             ],
         ]);
@@ -377,15 +605,11 @@ class SeedersTransformerTest extends TestCase
         // System set: 4 reference rows + 3 pivot rows, topo-sorted.
         $this->assertCount(7, $out['system']);
 
-        // Role rows come first (no deps).
         $this->assertSame(['App\\Models\\Role' => ['name' => 'admin', 'description' => 'Full access']], $out['system'][0]);
         $this->assertSame(['App\\Models\\Role' => ['name' => 'member', 'description' => 'Standard user']], $out['system'][1]);
-
-        // Permissions next.
         $this->assertSame(['App\\Models\\Permission' => ['name' => 'posts.read']], $out['system'][2]);
         $this->assertSame(['App\\Models\\Permission' => ['name' => 'posts.write']], $out['system'][3]);
 
-        // RolePermission pivot rows last — each FK is a Eloquent lookup chain.
         $pivot = $out['system'][4]['App\\Models\\RolePermission'];
         $this->assertSame(
             ['App\\Models\\Role' => ['where' => ['name', 'admin'], 'value' => 'id']],
@@ -396,7 +620,6 @@ class SeedersTransformerTest extends TestCase
             $pivot['permission_id']
         );
 
-        // Demo set: John has 5 directives translated + the FK lookup.
         $john = $out['demo'][0]['App\\Models\\User'];
         $this->assertSame(['Illuminate\\Support\\Str' => ['uuid' => null]], $john['id']);
         $this->assertSame('John Doe', $john['name']);
@@ -406,6 +629,5 @@ class SeedersTransformerTest extends TestCase
         $this->assertSame(['Illuminate\\Support\\Carbon' => ['now' => null]], $john['email_verified_at']);
         $this->assertSame(['Illuminate\\Support\\Carbon' => ['now' => null]], $john['created_at']);
         $this->assertSame(['Illuminate\\Support\\Carbon' => ['now' => null]], $john['updated_at']);
-        $this->assertArrayNotHasKey('_ref', $john);
     }
 }

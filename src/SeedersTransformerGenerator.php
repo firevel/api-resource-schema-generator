@@ -8,17 +8,49 @@ use InvalidArgumentException;
 use RuntimeException;
 
 /**
- * Translate the LLM-facing seeder JSON (per-resource maps with directives
- * `$ref / $now / $hash / $uuid` and `_ref` row labels) into the flat,
- * generator-level seeder format consumed by `firevel/generator`'s
- * `seeders` pipeline.
+ * Translate the LLM-facing seeder JSON into the generator-level seeder
+ * format consumed by `firevel/generator`'s `seeders` pipeline.
  *
- * Reads `seeders` and `schemas` from the resource (passed as the full
- * pre-scoped input via either a `scope: '.'` step or the standalone
- * `seeders-transform` pipeline). Pushes the result to
- * `context['transformed_seeders']` for `SchemaConsolidatorGenerator` to
- * fold into its output, and also emits the merged structure so the
- * pipeline is usable on its own via `--pipe` / `@output`.
+ * Input shape (LLM-facing, statically-typed for structured outputs —
+ * all keys are fixed, all collections are arrays of `{name, …}`):
+ *
+ *   "seeders": [
+ *     {
+ *       "name": "system",
+ *       "resources": [
+ *         {
+ *           "name": "Role",
+ *           "rows": [
+ *             { "ref": "admin",
+ *               "data": { "name": "admin", "description": "Full access" } }
+ *           ]
+ *         }
+ *       ]
+ *     }
+ *   ]
+ *
+ * Each row carries an optional `ref` (its addressable handle) and a
+ * required `data` map of column → Value. Values are scalars, lists,
+ * or directive objects of the form `{"$": "<verb>", …args}`:
+ *
+ *   { "$": "ref",  "resource": "Role", "ref": "admin" }
+ *   { "$": "hash", "value": "secret" }
+ *   { "$": "uuid" }
+ *   { "$": "now"  }
+ *
+ * Output (in PipelineContext under `transformed_seeders`, picked up
+ * by `SchemaConsolidatorGenerator`) is the generator-level format —
+ * object keyed by set name with each entry as `{ClassFQN: cols}`:
+ *
+ *   "seeders": {
+ *     "system": [
+ *       { "App\\Models\\Role": { "name": "admin", "description": "Full access" } }
+ *     ]
+ *   }
+ *
+ * Refs can cross sets (a `demo` row can reference a `system` row); those
+ * resolve at insert time and don't constrain topo order within the
+ * referring set.
  */
 class SeedersTransformerGenerator extends BaseGenerator
 {
@@ -30,7 +62,7 @@ class SeedersTransformerGenerator extends BaseGenerator
     public function handle()
     {
         if (! $this->resource()->has('seeders')) {
-            return; // silent no-op — input simply doesn't carry a seeders block
+            return; // silent no-op when input lacks seeders
         }
         $seeders = $this->resource()->get('seeders');
         if (! is_array($seeders) || $seeders === []) {
@@ -44,24 +76,22 @@ class SeedersTransformerGenerator extends BaseGenerator
 
         $schemasByName = $this->indexSchemasByName($schemas);
 
-        // Build a global flat list and label index across all sets so that
-        // a $ref from one set (e.g. "demo") can resolve to a row in another
-        // set (e.g. "system"). Such a cross-set $ref does NOT impose a
-        // topo-sort constraint on the *referring* set — system runs first,
-        // demo second; the FK lookup happens at insert time.
+        // Build global flat list + label index across all sets so a ref
+        // from one set can resolve to a row in another (demo → system).
         [$flat, $labelIndex] = $this->buildIndex($seeders);
 
         $transformed = [];
         $totalRows = 0;
-        foreach ($seeders as $setName => $rowsByResource) {
-            $entries = $this->transformSet($setName, $rowsByResource, $schemasByName, $flat, $labelIndex);
+        foreach ($seeders as $setEntry) {
+            $setName = $setEntry['name'];
+            $entries = $this->transformSet($setName, $schemasByName, $flat, $labelIndex);
             $transformed[$setName] = $entries;
             $totalRows += count($entries);
         }
 
         $this->context()->set('transformed_seeders', $transformed);
 
-        // Expose the merged structure for standalone runs (chained via @output).
+        // Expose merged structure for standalone runs (chained via @output).
         $output = $this->resource()->all();
         $output['seeders'] = $transformed;
         $this->emitOutput($output);
@@ -70,75 +100,7 @@ class SeedersTransformerGenerator extends BaseGenerator
     }
 
     /**
-     * Build a global flat list `[i => {set, resource, row, ref}]` plus a
-     * label index `"Resource.label" => global flat-list i`. Validates
-     * shape at every level and rejects duplicate labels.
-     *
-     * @return array{0: array<int, array{set:string,resource:string,row:array<string,mixed>,ref:?string}>, 1: array<string, int>}
-     */
-    private function buildIndex(array $seeders): array
-    {
-        $flat = [];
-        $labelIndex = [];
-
-        foreach ($seeders as $setName => $rowsByResource) {
-            if (! is_string($setName) || $setName === '') {
-                throw new InvalidArgumentException(
-                    'seeders keys must be non-empty strings naming a set (e.g. "system", "demo").'
-                );
-            }
-            if (! is_array($rowsByResource)) {
-                throw new InvalidArgumentException(
-                    "seeders.{$setName} must be an object keyed by resource name."
-                );
-            }
-
-            foreach ($rowsByResource as $resourceName => $rows) {
-                if (! is_string($resourceName) || $resourceName === '') {
-                    throw new InvalidArgumentException(
-                        "seeders.{$setName} keys must be non-empty resource names (PascalCase)."
-                    );
-                }
-                if (! is_array($rows)) {
-                    throw new InvalidArgumentException(
-                        "seeders.{$setName}.{$resourceName} must be an array of row objects."
-                    );
-                }
-
-                foreach ($rows as $idx => $row) {
-                    if (! is_array($row)) {
-                        throw new InvalidArgumentException(
-                            "seeders.{$setName}.{$resourceName}[{$idx}] must be an object."
-                        );
-                    }
-
-                    $globalIdx = count($flat);
-                    $ref = isset($row['_ref']) && is_string($row['_ref']) ? $row['_ref'] : null;
-                    $flat[] = [
-                        'set' => $setName,
-                        'resource' => $resourceName,
-                        'row' => $row,
-                        'ref' => $ref,
-                    ];
-
-                    if ($ref !== null) {
-                        $key = "{$resourceName}.{$ref}";
-                        if (isset($labelIndex[$key])) {
-                            throw new InvalidArgumentException(
-                                "seeders: duplicate _ref label '{$key}' across sets — labels must be unique per resource."
-                            );
-                        }
-                        $labelIndex[$key] = $globalIdx;
-                    }
-                }
-            }
-        }
-
-        return [$flat, $labelIndex];
-    }
-
-    /**
-     * @param array<int, mixed> $schemas
+     * @param array<int, array<string, mixed>> $schemas
      * @return array<string, array<string, mixed>>
      */
     private function indexSchemasByName(array $schemas): array
@@ -154,21 +116,109 @@ class SeedersTransformerGenerator extends BaseGenerator
     }
 
     /**
-     * @param array<string, array<int, mixed>> $rowsByResource
+     * Walk the array-shaped envelope once. Validates every level and
+     * returns:
+     *   - $flat: list of `{set, resource, data, ref}` records (one per row,
+     *     in input order — across all sets).
+     *   - $labelIndex: `"Resource.ref"` → global flat-list index.
+     *
+     * @return array{0: array<int, array{set:string,resource:string,data:array<string,mixed>,ref:?string}>, 1: array<string, int>}
+     */
+    private function buildIndex(array $seeders): array
+    {
+        $flat = [];
+        $labelIndex = [];
+
+        foreach ($seeders as $setIdx => $setEntry) {
+            if (! is_array($setEntry)) {
+                throw new InvalidArgumentException(
+                    "seeders[{$setIdx}] must be an object {name, resources}."
+                );
+            }
+            $setName = $setEntry['name'] ?? null;
+            if (! is_string($setName) || $setName === '') {
+                throw new InvalidArgumentException(
+                    "seeders[{$setIdx}].name must be a non-empty string (e.g. \"system\", \"demo\")."
+                );
+            }
+
+            $resources = $setEntry['resources'] ?? [];
+            if (! is_array($resources)) {
+                throw new InvalidArgumentException(
+                    "seeders[{$setIdx}].resources must be an array of {name, rows} objects."
+                );
+            }
+
+            foreach ($resources as $resIdx => $resEntry) {
+                if (! is_array($resEntry)) {
+                    throw new InvalidArgumentException(
+                        "seeders[{$setIdx}].resources[{$resIdx}] must be an object {name, rows}."
+                    );
+                }
+                $resourceName = $resEntry['name'] ?? null;
+                if (! is_string($resourceName) || $resourceName === '') {
+                    throw new InvalidArgumentException(
+                        "seeders[{$setIdx}].resources[{$resIdx}].name must be a non-empty string (PascalCase resource name)."
+                    );
+                }
+
+                $rows = $resEntry['rows'] ?? [];
+                if (! is_array($rows)) {
+                    throw new InvalidArgumentException(
+                        "seeders[{$setIdx}].resources[{$resIdx}].rows must be an array of row objects."
+                    );
+                }
+
+                foreach ($rows as $rowIdx => $row) {
+                    if (! is_array($row)) {
+                        throw new InvalidArgumentException(
+                            "seeders[{$setIdx}].resources[{$resIdx}].rows[{$rowIdx}] must be an object."
+                        );
+                    }
+                    $data = $row['data'] ?? null;
+                    if (! is_array($data)) {
+                        throw new InvalidArgumentException(
+                            "seeders[{$setIdx}].resources[{$resIdx}].rows[{$rowIdx}].data must be an object of column → value."
+                        );
+                    }
+                    $ref = isset($row['ref']) && is_string($row['ref']) && $row['ref'] !== '' ? $row['ref'] : null;
+
+                    $globalIdx = count($flat);
+                    $flat[] = [
+                        'set' => $setName,
+                        'resource' => $resourceName,
+                        'data' => $data,
+                        'ref' => $ref,
+                    ];
+
+                    if ($ref !== null) {
+                        $key = "{$resourceName}.{$ref}";
+                        if (isset($labelIndex[$key])) {
+                            throw new InvalidArgumentException(
+                                "seeders: duplicate ref '{$key}' across rows — refs must be unique per resource."
+                            );
+                        }
+                        $labelIndex[$key] = $globalIdx;
+                    }
+                }
+            }
+        }
+
+        return [$flat, $labelIndex];
+    }
+
+    /**
      * @param array<string, array<string, mixed>> $schemasByName
-     * @param array<int, array{set:string,resource:string,row:array<string,mixed>,ref:?string}> $flat
+     * @param array<int, array{set:string,resource:string,data:array<string,mixed>,ref:?string}> $flat
      * @param array<string, int> $labelIndex
      * @return array<int, array<string, array<string, mixed>>>
      */
     private function transformSet(
         string $setName,
-        array $rowsByResource,
         array $schemasByName,
         array $flat,
         array $labelIndex
     ): array {
-        // Collect the global indices of rows in THIS set, preserving the
-        // insertion order recorded during the global pass.
         $setIndices = [];
         foreach ($flat as $i => $item) {
             if ($item['set'] === $setName) {
@@ -179,16 +229,14 @@ class SeedersTransformerGenerator extends BaseGenerator
             return [];
         }
 
-        // For topo-sort purposes we only care about deps that point at
-        // rows in the SAME set; cross-set $refs (e.g. demo → system) are
-        // resolved at insert time and don't constrain ordering here.
+        // Only intra-set deps influence topo order; cross-set refs are
+        // resolved at insert time (system runs first, demo second).
         $localPos = array_flip($setIndices); // global idx => local pos
         $localDeps = [];
         foreach ($setIndices as $localPosIdx => $globalIdx) {
             $localDeps[$localPosIdx] = $this->collectRefDeps(
-                $flat[$globalIdx]['row'],
+                $flat[$globalIdx]['data'],
                 $labelIndex,
-                $flat,
                 $setName,
                 $globalIdx,
                 $localPos
@@ -204,7 +252,7 @@ class SeedersTransformerGenerator extends BaseGenerator
             $item = $flat[$globalIdx];
             $entries[] = $this->transformRow(
                 $item['resource'],
-                $item['row'],
+                $item['data'],
                 $schemasByName,
                 $labelIndex,
                 $flat,
@@ -217,42 +265,38 @@ class SeedersTransformerGenerator extends BaseGenerator
     }
 
     /**
-     * Collect intra-set dependencies for one row. Walks the row tree,
-     * resolves each `$ref` against the global label index, and keeps
-     * only those whose target sits in the same set (mapped through
-     * `$localPos`). Cross-set refs are validated (must exist) but
-     * dropped from the topo graph.
+     * Collect intra-set dependency edges (as local positions). Walks the
+     * row's data tree, finds every `{"$": "ref", …}` directive, validates
+     * its target exists, and keeps only same-set deps.
      *
-     * @param array<string, mixed> $row
+     * @param array<string, mixed> $data
      * @param array<string, int>   $labelIndex
-     * @param array<int, array<string, mixed>> $flat
-     * @param array<int, int> $localPos  global idx => local pos
-     * @return array<int, int>  list of local-position dep indices
+     * @param array<int, int>      $localPos  global idx => local pos
+     * @return array<int, int>
      */
     private function collectRefDeps(
-        array $row,
+        array $data,
         array $labelIndex,
-        array $flat,
         string $setName,
         int $selfGlobalIdx,
         array $localPos
     ): array {
         $deps = [];
-        $this->walkForRefs($row, $labelIndex, $flat, $setName, $selfGlobalIdx, $localPos, $deps);
+        $this->walkForRefs($data, $labelIndex, $setName, $selfGlobalIdx, $localPos, $deps);
         $deps = array_values(array_unique($deps));
         return array_values(array_filter($deps, fn ($d) => $d !== ($localPos[$selfGlobalIdx] ?? -1)));
     }
 
     /**
-     * Recursively walk a value, validating every `$ref` and accumulating
-     * intra-set dependency edges (local positions).
+     * Recursive walker: any object with a string `"$"` discriminator is a
+     * directive (terminal — don't recurse further). Anything else (assoc
+     * map, list) gets walked.
      *
      * @param array<int, int> $out
      */
     private function walkForRefs(
         mixed $value,
         array $labelIndex,
-        array $flat,
         string $setName,
         int $selfGlobalIdx,
         array $localPos,
@@ -262,39 +306,38 @@ class SeedersTransformerGenerator extends BaseGenerator
             return;
         }
 
-        if (count($value) === 1) {
-            $k = array_key_first($value);
-            if ($k === '$ref') {
-                $ref = (string) $value[$k];
-                if (! isset($labelIndex[$ref])) {
+        if (isset($value['$']) && is_string($value['$'])) {
+            if ($value['$'] === 'ref') {
+                $resource = $value['resource'] ?? null;
+                $ref = $value['ref'] ?? null;
+                if (! is_string($resource) || $resource === '' || ! is_string($ref) || $ref === '') {
                     throw new InvalidArgumentException(
-                        "seeders.{$setName}: \$ref '{$ref}' has no matching _ref label."
+                        "seeders.{$setName}: ref directive requires non-empty 'resource' and 'ref' strings."
                     );
                 }
-                $depGlobalIdx = $labelIndex[$ref];
-                // Only same-set deps influence topo order.
+                $key = "{$resource}.{$ref}";
+                if (! isset($labelIndex[$key])) {
+                    throw new InvalidArgumentException(
+                        "seeders.{$setName}: ref to '{$key}' has no matching row."
+                    );
+                }
+                $depGlobalIdx = $labelIndex[$key];
                 if (isset($localPos[$depGlobalIdx])) {
                     $out[] = $localPos[$depGlobalIdx];
                 }
-                return;
             }
-            // Other directives ($now / $hash / $uuid) don't introduce deps.
-            if (is_string($k) && str_starts_with($k, '$')) {
-                return;
-            }
+            return;
         }
 
-        // Walk nested structures (assoc maps and lists).
         foreach ($value as $sub) {
-            $this->walkForRefs($sub, $labelIndex, $flat, $setName, $selfGlobalIdx, $localPos, $out);
+            $this->walkForRefs($sub, $labelIndex, $setName, $selfGlobalIdx, $localPos, $out);
         }
     }
 
     /**
-     * Kahn topological sort. Ties are broken by original insertion order
-     * (flat-list index ascending).
+     * Kahn topo sort with original-order tiebreak.
      *
-     * @param array<int, array<int, int>> $deps  i => list of dependency indices
+     * @param array<int, array<int, int>> $deps  local pos => list of dep local positions
      * @return array<int, int>
      */
     private function topoSort(int $n, array $deps, string $setName): array
@@ -304,7 +347,6 @@ class SeedersTransformerGenerator extends BaseGenerator
             $inDegree[$i] = count($deps[$i] ?? []);
         }
 
-        // Reverse adjacency: dependent_of[dep] = list of items depending on dep.
         $dependents = [];
         foreach ($deps as $i => $list) {
             foreach ($list as $d) {
@@ -335,7 +377,7 @@ class SeedersTransformerGenerator extends BaseGenerator
 
         if (count($out) !== $n) {
             throw new RuntimeException(
-                "seeders.{$setName}: cycle detected in \$ref dependencies; cannot determine insertion order."
+                "seeders.{$setName}: cycle detected in ref dependencies; cannot determine insertion order."
             );
         }
 
@@ -343,27 +385,24 @@ class SeedersTransformerGenerator extends BaseGenerator
     }
 
     /**
-     * @param array<string, mixed> $row
+     * @param array<string, mixed> $data
      * @param array<string, array<string, mixed>> $schemasByName
      * @param array<string, int> $labelIndex
-     * @param array<int, array{resource: string, row: array<string, mixed>, ref: ?string}> $flat
+     * @param array<int, array{set:string,resource:string,data:array<string,mixed>,ref:?string}> $flat
      * @param array<string, string> $natKeyCache
      * @return array<string, array<string, mixed>>
      */
     private function transformRow(
         string $resourceName,
-        array $row,
+        array $data,
         array $schemasByName,
         array $labelIndex,
         array $flat,
         array &$natKeyCache,
         string $path
     ): array {
-        $clean = $row;
-        unset($clean['_ref']);
-
         $transformed = [];
-        foreach ($clean as $col => $value) {
+        foreach ($data as $col => $value) {
             $transformed[$col] = $this->transformValue(
                 $value,
                 $schemasByName,
@@ -380,7 +419,7 @@ class SeedersTransformerGenerator extends BaseGenerator
     /**
      * @param array<string, array<string, mixed>> $schemasByName
      * @param array<string, int> $labelIndex
-     * @param array<int, array{resource: string, row: array<string, mixed>, ref: ?string}> $flat
+     * @param array<int, array{set:string,resource:string,data:array<string,mixed>,ref:?string}> $flat
      * @param array<string, string> $natKeyCache
      */
     private function transformValue(
@@ -395,64 +434,78 @@ class SeedersTransformerGenerator extends BaseGenerator
             return $value;
         }
 
-        // Single-key map with a $-prefixed directive key.
-        if (count($value) === 1) {
-            $k = (string) array_key_first($value);
-            if (str_starts_with($k, '$')) {
-                return $this->resolveDirective($k, $value[$k], $schemasByName, $labelIndex, $flat, $natKeyCache, $path);
-            }
+        // Directive — object with a "$" string discriminator.
+        if (isset($value['$']) && is_string($value['$'])) {
+            return $this->resolveDirective($value, $schemasByName, $labelIndex, $flat, $natKeyCache, $path);
         }
 
-        // Pass other arrays through. Scalar lists are valid generator values;
-        // other shapes the schema layer doesn't produce, but we don't
-        // strip / re-encode them either.
+        // Plain array (list or assoc) passes through unchanged.
         return $value;
     }
 
     /**
+     * @param array<string, mixed> $directive
      * @param array<string, array<string, mixed>> $schemasByName
      * @param array<string, int> $labelIndex
-     * @param array<int, array{resource: string, row: array<string, mixed>, ref: ?string}> $flat
+     * @param array<int, array{set:string,resource:string,data:array<string,mixed>,ref:?string}> $flat
      * @param array<string, string> $natKeyCache
      * @return array<string, mixed>
      */
     private function resolveDirective(
-        string $directive,
-        mixed $arg,
+        array $directive,
         array $schemasByName,
         array $labelIndex,
         array $flat,
         array &$natKeyCache,
         string $path
     ): array {
-        switch ($directive) {
-            case '$now':
+        $verb = $directive['$'];
+
+        switch ($verb) {
+            case 'now':
                 return ['Illuminate\\Support\\Carbon' => ['now' => null]];
-            case '$uuid':
+
+            case 'uuid':
                 return ['Illuminate\\Support\\Str' => ['uuid' => null]];
-            case '$hash':
-                if (! is_string($arg)) {
-                    throw new InvalidArgumentException("{$path}: \$hash requires a string argument.");
+
+            case 'hash':
+                $value = $directive['value'] ?? null;
+                if (! is_string($value)) {
+                    throw new InvalidArgumentException(
+                        "{$path}: hash directive requires a string 'value'."
+                    );
                 }
-                return ['Illuminate\\Support\\Facades\\Hash' => ['make' => $arg]];
-            case '$ref':
-                if (! is_string($arg)) {
-                    throw new InvalidArgumentException("{$path}: \$ref requires a 'Resource.label' string argument.");
+                return ['Illuminate\\Support\\Facades\\Hash' => ['make' => $value]];
+
+            case 'ref':
+                $resource = $directive['resource'] ?? null;
+                $ref = $directive['ref'] ?? null;
+                if (! is_string($resource) || $resource === '') {
+                    throw new InvalidArgumentException(
+                        "{$path}: ref directive requires a non-empty 'resource' string."
+                    );
                 }
-                return $this->resolveRef($arg, $schemasByName, $labelIndex, $flat, $natKeyCache, $path);
+                if (! is_string($ref) || $ref === '') {
+                    throw new InvalidArgumentException(
+                        "{$path}: ref directive requires a non-empty 'ref' string."
+                    );
+                }
+                return $this->resolveRef($resource, $ref, $schemasByName, $labelIndex, $flat, $natKeyCache, $path);
+
             default:
-                throw new InvalidArgumentException("{$path}: unknown directive '{$directive}'.");
+                throw new InvalidArgumentException("{$path}: unknown directive verb '{$verb}'.");
         }
     }
 
     /**
      * @param array<string, array<string, mixed>> $schemasByName
      * @param array<string, int> $labelIndex
-     * @param array<int, array{resource: string, row: array<string, mixed>, ref: ?string}> $flat
+     * @param array<int, array{set:string,resource:string,data:array<string,mixed>,ref:?string}> $flat
      * @param array<string, string> $natKeyCache
      * @return array<string, array<string, mixed>>
      */
     private function resolveRef(
+        string $resourceName,
         string $ref,
         array $schemasByName,
         array $labelIndex,
@@ -460,29 +513,24 @@ class SeedersTransformerGenerator extends BaseGenerator
         array &$natKeyCache,
         string $path
     ): array {
-        $parts = explode('.', $ref, 2);
-        if (count($parts) !== 2 || $parts[0] === '' || $parts[1] === '') {
-            throw new InvalidArgumentException("{$path}: invalid \$ref '{$ref}' (expected 'Resource.label').");
-        }
-        [$resourceName, $label] = $parts;
-
-        if (! isset($labelIndex[$ref])) {
-            throw new InvalidArgumentException("{$path}: \$ref '{$ref}' has no matching _ref label.");
+        $key = "{$resourceName}.{$ref}";
+        if (! isset($labelIndex[$key])) {
+            throw new InvalidArgumentException("{$path}: ref to '{$key}' has no matching row.");
         }
 
         $naturalKey = $this->getNaturalKey($resourceName, $schemasByName, $natKeyCache, $path);
 
-        $referencedRow = $flat[$labelIndex[$ref]]['row'];
-        if (! array_key_exists($naturalKey, $referencedRow)) {
+        $referencedData = $flat[$labelIndex[$key]]['data'];
+        if (! array_key_exists($naturalKey, $referencedData)) {
             throw new InvalidArgumentException(
-                "{$path}: \$ref '{$ref}' resolves to a row in '{$resourceName}' but the row has no '{$naturalKey}' column (the resource's natural key)."
+                "{$path}: ref to '{$key}' resolves to a row in '{$resourceName}' but the row has no '{$naturalKey}' column (the resource's natural key)."
             );
         }
-        $naturalValue = $referencedRow[$naturalKey];
+        $naturalValue = $referencedData[$naturalKey];
 
         if (is_array($naturalValue)) {
             throw new InvalidArgumentException(
-                "{$path}: \$ref '{$ref}' natural-key column '{$naturalKey}' is a directive, not a literal scalar. Pre-resolve it in the source data."
+                "{$path}: ref natural-key column '{$naturalKey}' for resource '{$resourceName}' is a directive, not a literal scalar. Pre-resolve it in the source data."
             );
         }
 
@@ -495,7 +543,6 @@ class SeedersTransformerGenerator extends BaseGenerator
     /**
      * Choose the natural-key column for a resource. Preference order:
      * `code` → `slug` → `name` → `email` → first unique non-PK column.
-     * Throws if the resource has no unique non-PK column at all.
      *
      * @param array<string, array<string, mixed>> $schemasByName
      * @param array<string, string> $cache
@@ -508,7 +555,7 @@ class SeedersTransformerGenerator extends BaseGenerator
 
         if (! isset($schemasByName[$resourceName])) {
             throw new InvalidArgumentException(
-                "{$path}: cannot resolve \$ref to unknown resource '{$resourceName}'. "
+                "{$path}: cannot resolve ref to unknown resource '{$resourceName}'. "
                 . 'Available resources: ' . (empty($schemasByName) ? '(none)' : implode(', ', array_keys($schemasByName)))
             );
         }
@@ -533,7 +580,7 @@ class SeedersTransformerGenerator extends BaseGenerator
 
         if ($uniques === []) {
             throw new InvalidArgumentException(
-                "{$path}: resource '{$resourceName}' has no unique non-PK column to serve as a natural key for \$ref resolution. "
+                "{$path}: resource '{$resourceName}' has no unique non-PK column to serve as a natural key for ref resolution. "
                 . 'Mark one of its columns with `index: "unique"`.'
             );
         }

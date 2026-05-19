@@ -62,12 +62,22 @@ class ApiResourceSchemaServiceProvider extends ServiceProvider
                 'type' => 'object',
                 'required' => ['seeders'],
                 'properties' => [
-                    'seeders' => ['type' => 'object'],
+                    'seeders' => [
+                        'type' => 'array',
+                        'items' => [
+                            'type' => 'object',
+                            'required' => ['name', 'resources'],
+                            'properties' => [
+                                'name' => ['type' => 'string', 'minLength' => 1],
+                                'resources' => ['type' => 'array'],
+                            ],
+                        ],
+                    ],
                     'schemas' => ['type' => 'array'],
                 ],
             ],
             'input_error_messages' => [
-                '/seeders' => "Pipeline 'seeders-transform' requires a top-level `seeders` object keyed by set name (e.g. \"system\", \"demo\").",
+                '/seeders' => "Pipeline 'seeders-transform' requires a top-level `seeders` array of `{name, resources}` set objects (e.g. [{\"name\":\"system\",\"resources\":[...]},{\"name\":\"demo\",\"resources\":[...]}]).",
             ],
             'steps' => [
                 'transform' => \Firevel\ApiResourceSchemaGenerator\SeedersTransformerGenerator::class,
@@ -90,7 +100,7 @@ class ApiResourceSchemaServiceProvider extends ServiceProvider
                         'type' => 'array',
                         'minItems' => 1,
                     ],
-                    'seeders' => ['type' => 'object'],
+                    'seeders' => ['type' => 'array'],
                 ],
             ],
             'input_error_messages' => [
