@@ -34,6 +34,15 @@ class SeedersTransformerTest extends TestCase
         return ['name' => 'id', 'type' => 'increments', 'index' => 'primary'];
     }
 
+    /**
+     * UUID primary key. preAssignIds() skips this PK type, so refs to such
+     * a row exercise the natural-key fallback path in resolveRef().
+     */
+    private function uuidPkField(): array
+    {
+        return ['name' => 'id', 'type' => 'uuid', 'index' => 'primary'];
+    }
+
     /** @test */
     public function it_passes_through_scalar_only_rows(): void
     {
@@ -92,7 +101,7 @@ class SeedersTransformerTest extends TestCase
     }
 
     /** @test */
-    public function it_resolves_ref_via_natural_key_lookup(): void
+    public function it_resolves_ref_to_pre_assigned_id_for_increments_pk(): void
     {
         $out = $this->transform([
             'schemas' => [
@@ -131,10 +140,38 @@ class SeedersTransformerTest extends TestCase
             $out['system'][0]
         );
 
-        $userRow = $out['system'][1]['App\\Models\\User'];
+        // Ref resolves to the pre-assigned scalar id, NOT a deferred
+        // Model::where(...)->value('id') lookup.
+        $this->assertSame(1, $out['system'][1]['App\\Models\\User']['role_id']);
+    }
+
+    /** @test */
+    public function ref_falls_back_to_natural_key_lookup_when_pre_assignment_is_skipped(): void
+    {
+        // UUID PK → preAssignIds skips, so resolveRef must use the natural-key
+        // descriptor path: Model::where(<unique>, <value>)->value('id').
+        $out = $this->transform([
+            'schemas' => [
+                $this->schema('Role', [$this->uuidPkField(), $this->uniqueField('name')]),
+                $this->schema('User', [$this->pkField(), $this->uniqueField('email')]),
+            ],
+            'seeders' => [
+                [
+                    'name' => 'system',
+                    'resources' => [
+                        ['name' => 'Role', 'rows' => [['ref' => 'admin', 'data' => ['name' => 'admin']]]],
+                        ['name' => 'User', 'rows' => [['data' => [
+                            'email' => 'john@x.com',
+                            'role_id' => ['$' => 'ref', 'resource' => 'Role', 'ref' => 'admin'],
+                        ]]]],
+                    ],
+                ],
+            ],
+        ]);
+
         $this->assertSame(
             ['App\\Models\\Role' => ['where' => ['name', 'admin'], 'value' => 'id']],
-            $userRow['role_id']
+            $out['system'][1]['App\\Models\\User']['role_id']
         );
     }
 
@@ -180,10 +217,11 @@ class SeedersTransformerTest extends TestCase
     /** @test */
     public function natural_key_picks_preferred_column_when_multiple_uniques_exist(): void
     {
+        // UUID PK forces the natural-key path (preAssignIds skips uuid).
         $out = $this->transform([
             'schemas' => [
                 $this->schema('Role', [
-                    $this->pkField(),
+                    $this->uuidPkField(),
                     $this->uniqueField('email'),
                     $this->uniqueField('slug'),
                     $this->uniqueField('name'),
@@ -227,10 +265,11 @@ class SeedersTransformerTest extends TestCase
     /** @test */
     public function natural_key_falls_back_to_first_unique_when_no_preferred_match(): void
     {
+        // UUID PK forces the natural-key path (preAssignIds skips uuid).
         $out = $this->transform([
             'schemas' => [
                 $this->schema('Token', [
-                    $this->pkField(),
+                    $this->uuidPkField(),
                     $this->uniqueField('token_hash'),
                 ]),
             ],
@@ -260,13 +299,15 @@ class SeedersTransformerTest extends TestCase
     /** @test */
     public function it_errors_when_resource_has_no_unique_non_pk_column(): void
     {
+        // UUID PK forces the natural-key path; with no unique non-PK column,
+        // resolveRef has no fallback and must throw.
         $this->expectException(\InvalidArgumentException::class);
         $this->expectExceptionMessageMatches('/no unique non-PK column/');
 
         $this->transform([
             'schemas' => [
                 $this->schema('Role', [
-                    $this->pkField(),
+                    $this->uuidPkField(),
                     ['name' => 'name', 'type' => 'string'], // no `index: unique`
                 ]),
             ],
@@ -352,13 +393,15 @@ class SeedersTransformerTest extends TestCase
     /** @test */
     public function it_errors_when_natural_key_value_is_itself_a_directive(): void
     {
+        // UUID PK forces the natural-key path; the unique column holds a
+        // directive instead of a literal, which resolveRef must reject.
         $this->expectException(\InvalidArgumentException::class);
         $this->expectExceptionMessageMatches('/natural-key column .* directive, not a literal/');
 
         $this->transform([
             'schemas' => [
                 $this->schema('Token', [
-                    $this->pkField(),
+                    $this->uuidPkField(),
                     $this->uniqueField('hash'),
                 ]),
             ],
@@ -480,10 +523,8 @@ class SeedersTransformerTest extends TestCase
         $this->assertCount(1, $out['system']);
         $this->assertCount(1, $out['demo']);
 
-        $this->assertSame(
-            ['App\\Models\\Role' => ['where' => ['name', 'admin'], 'value' => 'id']],
-            $out['demo'][0]['App\\Models\\User']['role_id']
-        );
+        // Role's increments PK gets `id: 1`; the demo-set ref resolves to that scalar.
+        $this->assertSame(1, $out['demo'][0]['App\\Models\\User']['role_id']);
     }
 
     /** @test */
@@ -612,22 +653,17 @@ class SeedersTransformerTest extends TestCase
         $this->assertSame(['App\\Models\\Permission' => ['id' => 1, 'name' => 'posts.read']], $out['system'][2]);
         $this->assertSame(['App\\Models\\Permission' => ['id' => 2, 'name' => 'posts.write']], $out['system'][3]);
 
+        // Refs to increments-PK rows resolve to the pre-assigned scalar id.
         $pivot = $out['system'][4]['App\\Models\\RolePermission'];
-        $this->assertSame(
-            ['App\\Models\\Role' => ['where' => ['name', 'admin'], 'value' => 'id']],
-            $pivot['role_id']
-        );
-        $this->assertSame(
-            ['App\\Models\\Permission' => ['where' => ['name', 'posts.read'], 'value' => 'id']],
-            $pivot['permission_id']
-        );
+        $this->assertSame(1, $pivot['role_id']);          // Role.admin
+        $this->assertSame(1, $pivot['permission_id']);    // Permission.posts.read
 
         $john = $out['demo'][0]['App\\Models\\User'];
         $this->assertSame(['Illuminate\\Support\\Str' => ['uuid' => null]], $john['id']);
         $this->assertSame('John Doe', $john['name']);
         $this->assertSame('john@example.com', $john['email']);
         $this->assertSame(['Illuminate\\Support\\Facades\\Hash' => ['make' => 'password123']], $john['password']);
-        $this->assertSame(['App\\Models\\Role' => ['where' => ['name', 'admin'], 'value' => 'id']], $john['role_id']);
+        $this->assertSame(1, $john['role_id']);
         $this->assertSame(['Illuminate\\Support\\Carbon' => ['now' => null]], $john['email_verified_at']);
         $this->assertSame(['Illuminate\\Support\\Carbon' => ['now' => null]], $john['created_at']);
         $this->assertSame(['Illuminate\\Support\\Carbon' => ['now' => null]], $john['updated_at']);
@@ -721,10 +757,8 @@ class SeedersTransformerTest extends TestCase
 
         $addressArg = $out['demo'][0]['App\\Models\\Store']['address_id']['App\\Models\\Address']['create'];
         $this->assertSame('123 Main', $addressArg['street']);
-        $this->assertSame(
-            ['App\\Models\\Country' => ['where' => ['code', 'US'], 'value' => 'id']],
-            $addressArg['country_id']
-        );
+        // Country has increments PK → ref resolves to pre-assigned scalar id (1).
+        $this->assertSame(1, $addressArg['country_id']);
         $this->assertSame(
             ['Illuminate\\Support\\Carbon' => ['now' => null]],
             $addressArg['created_at']
@@ -1026,4 +1060,73 @@ class SeedersTransformerTest extends TestCase
         $this->assertArrayHasKey('App\\Models\\Country', $out['demo'][0]);
         $this->assertArrayHasKey('App\\Models\\Store',   $out['demo'][1]);
     }
+
+    /** @test */
+    public function ref_to_random_id_row_without_natural_key_resolves_to_scalar_id(): void
+    {
+        // Bug regression: Address has a random-id PK and NO unique non-PK column,
+        // so getNaturalKey() throws. resolveRef() must prefer the literal id that
+        // preAssignIds() injected instead of falling through to the natural-key path.
+        $randomIdField = ['name' => 'id', 'type' => 'random-id', 'index' => 'primary'];
+
+        $out = $this->transform([
+            'schemas' => [
+                $this->schema('Address', [$randomIdField]),
+                $this->schema('Store',   [$this->pkField()]),
+            ],
+            'seeders' => [
+                ['name' => 'demo', 'resources' => [
+                    ['name' => 'Address', 'rows' => [
+                        ['ref' => 'home', 'data' => ['street' => '123 Main']],
+                    ]],
+                    ['name' => 'Store', 'rows' => [
+                        ['data' => [
+                            'name' => 'Main',
+                            'address_id' => ['$' => 'ref', 'resource' => 'Address', 'ref' => 'home'],
+                        ]],
+                    ]],
+                ]],
+            ],
+        ]);
+
+        $assignedId  = $out['demo'][0]['App\\Models\\Address']['id'];
+        $resolvedRef = $out['demo'][1]['App\\Models\\Store']['address_id'];
+
+        $this->assertIsInt($assignedId);
+        $this->assertSame($assignedId, $resolvedRef, 'ref should resolve to the scalar id injected by preAssignIds');
+    }
+
+    /** @test */
+    public function ref_to_random_id_row_prefers_scalar_id_over_natural_key_lookup(): void
+    {
+        // Even when a natural key IS available, the pre-assigned scalar id wins.
+        // Avoids an unnecessary Model::where(...)->value('id') round-trip at seed time.
+        $randomIdField = ['name' => 'id', 'type' => 'random-id', 'index' => 'primary'];
+
+        $out = $this->transform([
+            'schemas' => [
+                $this->schema('Event', [$randomIdField, $this->uniqueField('slug')]),
+                $this->schema('Ticket', [$this->pkField()]),
+            ],
+            'seeders' => [
+                ['name' => 'demo', 'resources' => [
+                    ['name' => 'Event', 'rows' => [
+                        ['ref' => 'launch', 'data' => ['slug' => 'launch-day']],
+                    ]],
+                    ['name' => 'Ticket', 'rows' => [
+                        ['data' => [
+                            'event_id' => ['$' => 'ref', 'resource' => 'Event', 'ref' => 'launch'],
+                        ]],
+                    ]],
+                ]],
+            ],
+        ]);
+
+        $assignedId  = $out['demo'][0]['App\\Models\\Event']['id'];
+        $resolvedRef = $out['demo'][1]['App\\Models\\Ticket']['event_id'];
+
+        $this->assertSame($assignedId, $resolvedRef);
+        $this->assertIsNotArray($resolvedRef, 'should not emit a Model::where descriptor when a scalar id is available');
+    }
+
 }

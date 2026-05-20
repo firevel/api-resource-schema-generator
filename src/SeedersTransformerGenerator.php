@@ -478,7 +478,7 @@ class SeedersTransformerGenerator extends BaseGenerator
      * @param array<string, int> $labelIndex
      * @param array<int, array{set:string,resource:string,data:array<string,mixed>,ref:?string}> $flat
      * @param array<string, string> $natKeyCache
-     * @return array<string, mixed>
+     * @return mixed array descriptor for most verbs; `ref` may return a scalar id when preAssignIds injected one.
      */
     private function resolveDirective(
         array $directive,
@@ -487,7 +487,7 @@ class SeedersTransformerGenerator extends BaseGenerator
         array $flat,
         array &$natKeyCache,
         string $path
-    ): array {
+    ): mixed {
         $verb = $directive['$'];
 
         switch ($verb) {
@@ -616,7 +616,7 @@ class SeedersTransformerGenerator extends BaseGenerator
      * @param array<string, int> $labelIndex
      * @param array<int, array{set:string,resource:string,data:array<string,mixed>,ref:?string}> $flat
      * @param array<string, string> $natKeyCache
-     * @return array<string, array<string, mixed>>
+     * @return mixed scalar id (when preAssignIds injected one) or a `Model::where(...)->value('id')` descriptor
      */
     private function resolveRef(
         string $resourceName,
@@ -626,15 +626,25 @@ class SeedersTransformerGenerator extends BaseGenerator
         array $flat,
         array &$natKeyCache,
         string $path
-    ): array {
+    ): mixed {
         $key = "{$resourceName}.{$ref}";
         if (! isset($labelIndex[$key])) {
             throw new InvalidArgumentException("{$path}: ref to '{$key}' has no matching row.");
         }
 
+        $referencedData = $flat[$labelIndex[$key]]['data'];
+
+        // Prefer the literal id assigned by preAssignIds(): emit as a scalar so
+        // the runtime template plugs it straight into the FK column. Only valid
+        // when the id is a literal — directives stay as directives.
+        if (array_key_exists('id', $referencedData) && ! is_array($referencedData['id'])) {
+            return $referencedData['id'];
+        }
+
+        // Fallback: deferred `Model::where(natKey, val)->value('id')` lookup.
+        // Reached when preAssignIds skipped the row (uuid / unknown PK).
         $naturalKey = $this->getNaturalKey($resourceName, $schemasByName, $natKeyCache, $path);
 
-        $referencedData = $flat[$labelIndex[$key]]['data'];
         if (! array_key_exists($naturalKey, $referencedData)) {
             throw new InvalidArgumentException(
                 "{$path}: ref to '{$key}' resolves to a row in '{$resourceName}' but the row has no '{$naturalKey}' column (the resource's natural key)."
