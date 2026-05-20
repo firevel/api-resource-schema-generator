@@ -26,6 +26,7 @@ class SchemaHandler extends BaseGenerator
         $this->addSortable($resource);
         $this->addSearchable($resource);
         $this->addSoftDeletes($resource);
+        $this->addRandomIds($resource);
         $this->addTransformer($resource);
         $this->addFilterables($resource);
         $this->addMigrations($resource);
@@ -114,6 +115,25 @@ class SchemaHandler extends BaseGenerator
                 if (!isset($output['model']['use']['SoftDeletes'])) {
                     $output['model']['use']['SoftDeletes'] = 'Illuminate\Database\Eloquent\SoftDeletes';
                 }
+                break;
+            }
+        }
+        $resource->output = $output;
+        return $resource;
+    }
+
+    public function addRandomIds($resource)
+    {
+        $output = $resource->output;
+        foreach ($resource->fields as $field) {
+            if (($field['type'] ?? null) === 'random-id') {
+                if (empty($output['model']['use'])) {
+                    $output['model']['use'] = [];
+                }
+                if (!isset($output['model']['use']['HasRandomId'])) {
+                    $output['model']['use']['HasRandomId'] = 'Firevel\ModelRandomId\HasRandomId';
+                }
+                $this->requirePackage('firevel/model-random-id', '*');
                 break;
             }
         }
@@ -213,6 +233,12 @@ class SchemaHandler extends BaseGenerator
                 $migration['increments'] = $field['name'];
                 unset($migration['nullable']);
                 break;
+            case 'random-id':
+                $autoSet = true;
+                $migration['bigInteger'] = $field['name'];
+                $migration['unsigned'] = null;
+                $migration['primary'] = null;
+                break;
             case 'id':
                 $migration['bigInteger'] = $field['name'];
                 $migration['unsigned'] = null;
@@ -271,6 +297,7 @@ class SchemaHandler extends BaseGenerator
     {
         $types = [
             'increments' => 'integer',
+            'random-id' => 'integer',
             'integer' => 'integer',
             'decimal' => 'numeric',
             'float' => 'numeric',
@@ -419,6 +446,7 @@ class SchemaHandler extends BaseGenerator
     {
         $types = [
             'increments' => 'id',
+            'random-id' => 'id',
             'integer' => 'integer',
             'decimal' => 'integer',
             'float' => 'integer',
