@@ -125,8 +125,9 @@ class SeedersTransformerTest extends TestCase
         ]);
 
         // Role row comes first via topo sort because User depends on it.
+        // The transformer auto-injects `id: 1` (sequential, increments PK).
         $this->assertSame(
-            ['App\\Models\\Role' => ['name' => 'admin']],
+            ['App\\Models\\Role' => ['id' => 1, 'name' => 'admin']],
             $out['system'][0]
         );
 
@@ -605,10 +606,11 @@ class SeedersTransformerTest extends TestCase
         // System set: 4 reference rows + 3 pivot rows, topo-sorted.
         $this->assertCount(7, $out['system']);
 
-        $this->assertSame(['App\\Models\\Role' => ['name' => 'admin', 'description' => 'Full access']], $out['system'][0]);
-        $this->assertSame(['App\\Models\\Role' => ['name' => 'member', 'description' => 'Standard user']], $out['system'][1]);
-        $this->assertSame(['App\\Models\\Permission' => ['name' => 'posts.read']], $out['system'][2]);
-        $this->assertSame(['App\\Models\\Permission' => ['name' => 'posts.write']], $out['system'][3]);
+        // Sequential ids 1..N per resource auto-injected for `increments` PKs.
+        $this->assertSame(['App\\Models\\Role' => ['id' => 1, 'name' => 'admin', 'description' => 'Full access']], $out['system'][0]);
+        $this->assertSame(['App\\Models\\Role' => ['id' => 2, 'name' => 'member', 'description' => 'Standard user']], $out['system'][1]);
+        $this->assertSame(['App\\Models\\Permission' => ['id' => 1, 'name' => 'posts.read']], $out['system'][2]);
+        $this->assertSame(['App\\Models\\Permission' => ['id' => 2, 'name' => 'posts.write']], $out['system'][3]);
 
         $pivot = $out['system'][4]['App\\Models\\RolePermission'];
         $this->assertSame(
@@ -864,6 +866,123 @@ class SeedersTransformerTest extends TestCase
                 ],
             ],
         ]);
+    }
+
+    /** @test */
+    public function pre_assigns_sequential_ids_for_increments_pk(): void
+    {
+        $out = $this->transform([
+            'schemas' => [
+                $this->schema('Role', [$this->pkField(), $this->uniqueField('name')]),
+            ],
+            'seeders' => [
+                [
+                    'name' => 'system',
+                    'resources' => [
+                        ['name' => 'Role', 'rows' => [
+                            ['data' => ['name' => 'admin']],
+                            ['data' => ['name' => 'member']],
+                            ['data' => ['name' => 'viewer']],
+                        ]],
+                    ],
+                ],
+            ],
+        ]);
+
+        $this->assertSame(1, $out['system'][0]['App\\Models\\Role']['id']);
+        $this->assertSame(2, $out['system'][1]['App\\Models\\Role']['id']);
+        $this->assertSame(3, $out['system'][2]['App\\Models\\Role']['id']);
+    }
+
+    /** @test */
+    public function increments_sequence_continues_across_sets_for_same_resource(): void
+    {
+        $out = $this->transform([
+            'schemas' => [
+                $this->schema('Role', [$this->pkField(), $this->uniqueField('name')]),
+            ],
+            'seeders' => [
+                [
+                    'name' => 'system',
+                    'resources' => [['name' => 'Role', 'rows' => [['data' => ['name' => 'admin']]]]],
+                ],
+                [
+                    'name' => 'demo',
+                    'resources' => [['name' => 'Role', 'rows' => [['data' => ['name' => 'guest']]]]],
+                ],
+            ],
+        ]);
+
+        $this->assertSame(1, $out['system'][0]['App\\Models\\Role']['id']);
+        $this->assertSame(2, $out['demo'][0]['App\\Models\\Role']['id']);
+    }
+
+    /** @test */
+    public function pre_assigns_deterministic_64bit_id_for_random_id_pk(): void
+    {
+        $randomIdField = ['name' => 'id', 'type' => 'random-id', 'index' => 'primary'];
+
+        $first = $this->transform([
+            'schemas' => [$this->schema('Event', [$randomIdField, $this->uniqueField('slug')])],
+            'seeders' => [
+                ['name' => 'demo', 'resources' => [
+                    ['name' => 'Event', 'rows' => [['ref' => 'launch', 'data' => ['slug' => 'launch-day']]]],
+                ]],
+            ],
+        ]);
+        $second = $this->transform([
+            'schemas' => [$this->schema('Event', [$randomIdField, $this->uniqueField('slug')])],
+            'seeders' => [
+                ['name' => 'demo', 'resources' => [
+                    ['name' => 'Event', 'rows' => [['ref' => 'launch', 'data' => ['slug' => 'launch-day']]]],
+                ]],
+            ],
+        ]);
+
+        $id = $first['demo'][0]['App\\Models\\Event']['id'];
+
+        // Determinism: same input → same id.
+        $this->assertSame($id, $second['demo'][0]['App\\Models\\Event']['id']);
+
+        // Range: matches the firevel/model-random-id trait's bounds.
+        $this->assertGreaterThanOrEqual(3656158440062976, $id);
+        $this->assertLessThanOrEqual(9007199254740991, $id);
+    }
+
+    /** @test */
+    public function existing_id_in_row_data_is_preserved(): void
+    {
+        $out = $this->transform([
+            'schemas' => [
+                $this->schema('Role', [$this->pkField(), $this->uniqueField('name')]),
+            ],
+            'seeders' => [
+                [
+                    'name' => 'system',
+                    'resources' => [['name' => 'Role', 'rows' => [
+                        ['data' => ['id' => 999, 'name' => 'admin']],
+                    ]]],
+                ],
+            ],
+        ]);
+
+        $this->assertSame(999, $out['system'][0]['App\\Models\\Role']['id']);
+    }
+
+    /** @test */
+    public function pre_assignment_skips_resources_with_no_schema_or_unknown_pk_type(): void
+    {
+        // No schema for "Role" → no PK type known → don't inject.
+        $out = $this->transform([
+            'schemas' => [],
+            'seeders' => [
+                ['name' => 'system', 'resources' => [
+                    ['name' => 'Role', 'rows' => [['data' => ['name' => 'admin']]]],
+                ]],
+            ],
+        ]);
+
+        $this->assertArrayNotHasKey('id', $out['system'][0]['App\\Models\\Role']);
     }
 
     /** @test */

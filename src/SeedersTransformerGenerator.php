@@ -54,6 +54,15 @@ use RuntimeException;
  */
 class SeedersTransformerGenerator extends BaseGenerator
 {
+    /**
+     * Bounds the `firevel/model-random-id` trait uses for its `creating`
+     * hook. Pre-assigned IDs land in the same range so the generated
+     * literal in the seeder file is indistinguishable from one the trait
+     * would produce at runtime.
+     */
+    private const RANDOM_ID_MIN = 3656158440062976;
+    private const RANDOM_ID_MAX = 9007199254740991;
+
     public static function description(): string
     {
         return 'Translate LLM-format seeder JSON into the generator-level seeder format.';
@@ -79,6 +88,11 @@ class SeedersTransformerGenerator extends BaseGenerator
         // Build global flat list + label index across all sets so a ref
         // from one set can resolve to a row in another (demo → system).
         [$flat, $labelIndex] = $this->buildIndex($seeders);
+
+        // Pre-assign literal IDs to every row whose `data.id` isn't already
+        // set, so the emitted seeder uses stable, deterministic IDs that
+        // re-runs of the same schema reproduce.
+        $flat = $this->preAssignIds($flat, $schemasByName);
 
         $transformed = [];
         $totalRows = 0;
@@ -697,5 +711,92 @@ class SeedersTransformerGenerator extends BaseGenerator
     private function modelClass(string $resourceName): string
     {
         return 'App\\Models\\' . Str::studly($resourceName);
+    }
+
+    /**
+     * Inject a literal `id` into every row whose `data` doesn't already
+     * carry one. Strategy depends on the resource's PK type:
+     *
+     *   - `random-id`  → deterministic 64-bit int in the trait's range,
+     *                    derived from (set, resource, ref-or-position) so
+     *                    re-runs of the same schema produce identical IDs.
+     *   - `increments` → per-resource sequence (1..N) shared across all sets
+     *                    so multiple sets seeding the same resource don't
+     *                    collide on PK.
+     *   - other         → leave the row alone; we don't know the PK shape.
+     *
+     * Rows that already declare `data.id` are passed through unchanged —
+     * the LLM gets the final word.
+     *
+     * @param array<int, array{set:string,resource:string,data:array<string,mixed>,ref:?string}> $flat
+     * @param array<string, array<string, mixed>> $schemasByName
+     * @return array<int, array{set:string,resource:string,data:array<string,mixed>,ref:?string}>
+     */
+    private function preAssignIds(array $flat, array $schemasByName): array
+    {
+        $sequencesByResource = [];
+
+        foreach ($flat as $globalIdx => &$item) {
+            if (array_key_exists('id', $item['data'])) {
+                continue;
+            }
+
+            $pkType = $this->detectPkType($item['resource'], $schemasByName);
+
+            if ($pkType === 'random-id') {
+                $seedKey = $item['set'] . '|' . $item['resource'] . '|' . ($item['ref'] ?? $globalIdx);
+                $id = $this->deterministicRandomId($seedKey);
+            } elseif ($pkType === 'increments') {
+                $sequencesByResource[$item['resource']] = ($sequencesByResource[$item['resource']] ?? 0) + 1;
+                $id = $sequencesByResource[$item['resource']];
+            } else {
+                // PK type is uuid / unknown / undeclared: don't presume to
+                // assign anything. The row's other directives ($uuid etc.)
+                // can still handle the id column explicitly.
+                continue;
+            }
+
+            // Place `id` first so the rendered INSERT reads naturally.
+            $item['data'] = ['id' => $id] + $item['data'];
+        }
+        unset($item);
+
+        return $flat;
+    }
+
+    /**
+     * Read the PK column's `type` from the resource's schema. Assumes the
+     * Laravel convention that the PK is named `id`.
+     *
+     * @param array<string, array<string, mixed>> $schemasByName
+     */
+    private function detectPkType(string $resourceName, array $schemasByName): ?string
+    {
+        if (! isset($schemasByName[$resourceName])) {
+            return null;
+        }
+        $fields = $schemasByName[$resourceName]['fields'] ?? [];
+        if (! is_array($fields)) {
+            return null;
+        }
+        foreach ($fields as $field) {
+            if (is_array($field) && ($field['name'] ?? null) === 'id') {
+                return $field['type'] ?? null;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Deterministic 64-bit int in [RANDOM_ID_MIN, RANDOM_ID_MAX]. Uses
+     * SHA-256 of the seed key, truncated to 56 bits so the parsed value
+     * is always a positive PHP int even on 32-bit builds.
+     */
+    private function deterministicRandomId(string $seedKey): int
+    {
+        $hash = hash('sha256', $seedKey);
+        $value = hexdec(substr($hash, 0, 14)); // 14 hex chars = 56 bits
+        $range = self::RANDOM_ID_MAX - self::RANDOM_ID_MIN + 1;
+        return self::RANDOM_ID_MIN + ((int) $value % $range);
     }
 }
