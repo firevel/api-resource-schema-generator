@@ -325,7 +325,22 @@ class SeedersTransformerGenerator extends BaseGenerator
                 if (isset($localPos[$depGlobalIdx])) {
                     $out[] = $localPos[$depGlobalIdx];
                 }
+                return;
             }
+            if ($value['$'] === 'nested') {
+                // Recurse into the nested child's data: any ref it contains
+                // constrains the parent row's insertion order (the parent
+                // statement embeds the child's create() inline, so all of
+                // the child's deps must be ready first).
+                $nestedData = $value['data'] ?? null;
+                if (is_array($nestedData)) {
+                    foreach ($nestedData as $sub) {
+                        $this->walkForRefs($sub, $labelIndex, $setName, $selfGlobalIdx, $localPos, $out);
+                    }
+                }
+                return;
+            }
+            // hash / now / uuid don't introduce deps.
             return;
         }
 
@@ -492,9 +507,94 @@ class SeedersTransformerGenerator extends BaseGenerator
                 }
                 return $this->resolveRef($resource, $ref, $schemasByName, $labelIndex, $flat, $natKeyCache, $path);
 
+            case 'nested':
+                return $this->resolveNested($directive, $schemasByName, $labelIndex, $flat, $natKeyCache, $path);
+
             default:
                 throw new InvalidArgumentException("{$path}: unknown directive verb '{$verb}'.");
         }
+    }
+
+    /**
+     * Translate a `nested` directive into a chained invocation:
+     *   `Model::create([…child data…])->getKey()`
+     *
+     * Eloquent's `create()` inserts the row and returns the model; `getKey()`
+     * pulls the model's PK (works for auto-increment and UUID alike). The
+     * whole expression goes inline as the parent column's value, so the
+     * nested child is inserted right before the parent INSERT runs, and its
+     * PK lands in the parent column without any variable bookkeeping.
+     *
+     * The child's `data` is processed by the same `transformValue` recursion
+     * as a top-level row, so refs / hash / now / uuid / nested all work
+     * inside it. Nested children carry NO `ref` label — they're not
+     * addressable from elsewhere.
+     *
+     * @param array<string, mixed> $directive
+     * @param array<string, array<string, mixed>> $schemasByName
+     * @param array<string, int> $labelIndex
+     * @param array<int, array{set:string,resource:string,data:array<string,mixed>,ref:?string}> $flat
+     * @param array<string, string> $natKeyCache
+     * @return array<string, array<string, mixed>>
+     */
+    private function resolveNested(
+        array $directive,
+        array $schemasByName,
+        array $labelIndex,
+        array $flat,
+        array &$natKeyCache,
+        string $path
+    ): array {
+        $resource = $directive['resource'] ?? null;
+        $childData = $directive['data'] ?? null;
+
+        if (! is_string($resource) || $resource === '') {
+            throw new InvalidArgumentException(
+                "{$path}: nested directive requires a non-empty 'resource' string."
+            );
+        }
+        if (! is_array($childData)) {
+            throw new InvalidArgumentException(
+                "{$path}: nested directive requires a 'data' object of column → value."
+            );
+        }
+
+        // The brief is explicit: nested children are not referenceable. Any
+        // `ref` field on a nested directive is malformed input.
+        if (array_key_exists('ref', $directive)) {
+            throw new InvalidArgumentException(
+                "{$path}: nested directive cannot carry a 'ref' field — nested children are not addressable."
+            );
+        }
+
+        $allowedKeys = ['$', 'resource', 'data'];
+        foreach (array_keys($directive) as $key) {
+            if (! in_array($key, $allowedKeys, true)) {
+                throw new InvalidArgumentException(
+                    "{$path}: nested directive has unexpected key '{$key}' (allowed: \$, resource, data)."
+                );
+            }
+        }
+
+        // Recursively transform the child's data — same rules as a row's
+        // top-level data, so further nested / ref / hash / now / uuid all
+        // resolve correctly.
+        $transformed = [];
+        foreach ($childData as $col => $value) {
+            $transformed[$col] = $this->transformValue(
+                $value,
+                $schemasByName,
+                $labelIndex,
+                $flat,
+                $natKeyCache,
+                "{$path}.<nested:{$resource}>.{$col}"
+            );
+        }
+
+        return [$this->modelClass($resource) => [
+            'create' => $transformed,
+            'getKey' => null,
+        ]];
     }
 
     /**

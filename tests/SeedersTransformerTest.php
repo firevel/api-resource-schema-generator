@@ -630,4 +630,281 @@ class SeedersTransformerTest extends TestCase
         $this->assertSame(['Illuminate\\Support\\Carbon' => ['now' => null]], $john['created_at']);
         $this->assertSame(['Illuminate\\Support\\Carbon' => ['now' => null]], $john['updated_at']);
     }
+
+    /** @test */
+    public function nested_directive_expands_to_create_get_key_chain(): void
+    {
+        $out = $this->transform([
+            'schemas' => [
+                $this->schema('Address', [$this->pkField()]),
+                $this->schema('Store',   [$this->pkField()]),
+            ],
+            'seeders' => [
+                [
+                    'name' => 'demo',
+                    'resources' => [
+                        [
+                            'name' => 'Store',
+                            'rows' => [[
+                                'data' => [
+                                    'name' => 'Main Store',
+                                    'address_id' => [
+                                        '$' => 'nested',
+                                        'resource' => 'Address',
+                                        'data' => [
+                                            'street' => '123 Main',
+                                            'city' => 'Springfield',
+                                        ],
+                                    ],
+                                ],
+                            ]],
+                        ],
+                    ],
+                ],
+            ],
+        ]);
+
+        $this->assertSame(
+            [
+                'App\\Models\\Address' => [
+                    'create' => ['street' => '123 Main', 'city' => 'Springfield'],
+                    'getKey' => null,
+                ],
+            ],
+            $out['demo'][0]['App\\Models\\Store']['address_id']
+        );
+    }
+
+    /** @test */
+    public function nested_directive_recurses_with_inner_directives(): void
+    {
+        // Nested child's `data` itself contains `ref`, `now`, and `hash`.
+        $out = $this->transform([
+            'schemas' => [
+                $this->schema('Country', [$this->pkField(), $this->uniqueField('code')]),
+                $this->schema('Address', [$this->pkField()]),
+                $this->schema('Store',   [$this->pkField()]),
+            ],
+            'seeders' => [
+                [
+                    'name' => 'system',
+                    'resources' => [
+                        ['name' => 'Country', 'rows' => [['ref' => 'us', 'data' => ['code' => 'US']]]],
+                    ],
+                ],
+                [
+                    'name' => 'demo',
+                    'resources' => [
+                        [
+                            'name' => 'Store',
+                            'rows' => [[
+                                'data' => [
+                                    'name' => 'Main',
+                                    'address_id' => [
+                                        '$' => 'nested',
+                                        'resource' => 'Address',
+                                        'data' => [
+                                            'street' => '123 Main',
+                                            'country_id' => ['$' => 'ref', 'resource' => 'Country', 'ref' => 'us'],
+                                            'created_at' => ['$' => 'now'],
+                                        ],
+                                    ],
+                                ],
+                            ]],
+                        ],
+                    ],
+                ],
+            ],
+        ]);
+
+        $addressArg = $out['demo'][0]['App\\Models\\Store']['address_id']['App\\Models\\Address']['create'];
+        $this->assertSame('123 Main', $addressArg['street']);
+        $this->assertSame(
+            ['App\\Models\\Country' => ['where' => ['code', 'US'], 'value' => 'id']],
+            $addressArg['country_id']
+        );
+        $this->assertSame(
+            ['Illuminate\\Support\\Carbon' => ['now' => null]],
+            $addressArg['created_at']
+        );
+    }
+
+    /** @test */
+    public function nested_directives_can_recurse_into_nested_directives(): void
+    {
+        // Store → Address → Geolocation (depth 2).
+        $out = $this->transform([
+            'schemas' => [
+                $this->schema('Geolocation', [$this->pkField()]),
+                $this->schema('Address',     [$this->pkField()]),
+                $this->schema('Store',       [$this->pkField()]),
+            ],
+            'seeders' => [
+                [
+                    'name' => 'demo',
+                    'resources' => [
+                        [
+                            'name' => 'Store',
+                            'rows' => [[
+                                'data' => [
+                                    'address_id' => [
+                                        '$' => 'nested',
+                                        'resource' => 'Address',
+                                        'data' => [
+                                            'street' => '123 Main',
+                                            'geolocation_id' => [
+                                                '$' => 'nested',
+                                                'resource' => 'Geolocation',
+                                                'data' => ['lat' => 40.7, 'lng' => -74.0],
+                                            ],
+                                        ],
+                                    ],
+                                ],
+                            ]],
+                        ],
+                    ],
+                ],
+            ],
+        ]);
+
+        $addressCreate = $out['demo'][0]['App\\Models\\Store']['address_id']['App\\Models\\Address']['create'];
+        $this->assertSame(
+            [
+                'App\\Models\\Geolocation' => [
+                    'create' => ['lat' => 40.7, 'lng' => -74.0],
+                    'getKey' => null,
+                ],
+            ],
+            $addressCreate['geolocation_id']
+        );
+    }
+
+    /** @test */
+    public function nested_directive_with_ref_field_is_rejected(): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessageMatches('/nested directive cannot carry a .ref. field/');
+
+        $this->transform([
+            'schemas' => [$this->schema('Address', [$this->pkField()])],
+            'seeders' => [
+                [
+                    'name' => 'demo',
+                    'resources' => [
+                        [
+                            'name' => 'Store',
+                            'rows' => [[
+                                'data' => [
+                                    'address_id' => [
+                                        '$' => 'nested',
+                                        'ref' => 'should_be_invalid',
+                                        'resource' => 'Address',
+                                        'data' => ['street' => 'x'],
+                                    ],
+                                ],
+                            ]],
+                        ],
+                    ],
+                ],
+            ],
+        ]);
+    }
+
+    /** @test */
+    public function nested_directive_requires_resource_and_data(): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+
+        $this->transform([
+            'schemas' => [],
+            'seeders' => [
+                [
+                    'name' => 'demo',
+                    'resources' => [
+                        [
+                            'name' => 'Store',
+                            'rows' => [[
+                                'data' => [
+                                    'address_id' => ['$' => 'nested', 'data' => ['street' => 'x']],
+                                ],
+                            ]],
+                        ],
+                    ],
+                ],
+            ],
+        ]);
+    }
+
+    /** @test */
+    public function nested_directive_rejects_extra_keys(): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessageMatches('/unexpected key/');
+
+        $this->transform([
+            'schemas' => [$this->schema('Address', [$this->pkField()])],
+            'seeders' => [
+                [
+                    'name' => 'demo',
+                    'resources' => [
+                        [
+                            'name' => 'Store',
+                            'rows' => [[
+                                'data' => [
+                                    'address_id' => [
+                                        '$' => 'nested',
+                                        'resource' => 'Address',
+                                        'data' => ['street' => 'x'],
+                                        'extra' => 'nope',
+                                    ],
+                                ],
+                            ]],
+                        ],
+                    ],
+                ],
+            ],
+        ]);
+    }
+
+    /** @test */
+    public function nested_ref_inside_constrains_parent_topo_order(): void
+    {
+        // Parent's `nested` child refs another row in the SAME set. The
+        // parent must be inserted AFTER that row so the ref resolves.
+        $out = $this->transform([
+            'schemas' => [
+                $this->schema('Country', [$this->pkField(), $this->uniqueField('code')]),
+                $this->schema('Address', [$this->pkField()]),
+                $this->schema('Store',   [$this->pkField()]),
+            ],
+            'seeders' => [
+                [
+                    'name' => 'demo',
+                    'resources' => [
+                        // Store appears BEFORE Country in input order, but its
+                        // nested Address depends on Country.us — so Country
+                        // must come first in the emitted order.
+                        [
+                            'name' => 'Store',
+                            'rows' => [[
+                                'data' => [
+                                    'address_id' => [
+                                        '$' => 'nested',
+                                        'resource' => 'Address',
+                                        'data' => [
+                                            'country_id' => ['$' => 'ref', 'resource' => 'Country', 'ref' => 'us'],
+                                        ],
+                                    ],
+                                ],
+                            ]],
+                        ],
+                        ['name' => 'Country', 'rows' => [['ref' => 'us', 'data' => ['code' => 'US']]]],
+                    ],
+                ],
+            ],
+        ]);
+
+        $this->assertArrayHasKey('App\\Models\\Country', $out['demo'][0]);
+        $this->assertArrayHasKey('App\\Models\\Store',   $out['demo'][1]);
+    }
 }
