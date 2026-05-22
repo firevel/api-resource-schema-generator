@@ -48,5 +48,11 @@ class SaveFile extends BaseGenerator
         }
 
         $this->createFile($path, json_encode($resource->output, JSON_PRETTY_PRINT));
+
+        // Expose the processed schema so a chained pipeline can consume it
+        // via `--json=@output` or the `--pipe` flag (e.g.
+        // `firevel:generate api-resource-schema,api-resource --pipe`).
+        // Mirrors SchemaConsolidatorGenerator's behavior for multi-resource runs.
+        $this->emitOutput($resource->output);
     }
 }
