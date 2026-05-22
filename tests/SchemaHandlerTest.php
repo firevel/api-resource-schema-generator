@@ -153,8 +153,10 @@ class SchemaHandlerTest extends TestCase
     }
 
     /** @test */
-    public function morph_to_with_morph_name()
+    public function morph_to_drops_redundant_morph_name_matching_method()
     {
+        // morphName matches what Laravel auto-derives from the method name
+        // (Str::snake of the method) — explicit arg is redundant, emit bare.
         $output = $this->runHandler([
             'name' => 'comment',
             'fields' => [],
@@ -163,9 +165,25 @@ class SchemaHandlerTest extends TestCase
             ],
         ]);
 
+        $this->assertSame('morphTo', $output['model']['relationships']['commentable']);
+    }
+
+    /** @test */
+    public function morph_to_keeps_explicit_morph_name_when_it_differs_from_method()
+    {
+        // morphName differs from the auto-derived value, so Laravel CAN'T
+        // infer it — keep the explicit arg.
+        $output = $this->runHandler([
+            'name' => 'earning',
+            'fields' => [],
+            'relationships' => [
+                ['name' => 'parent', 'type' => 'morphTo', 'morphName' => 'earnable'],
+            ],
+        ]);
+
         $this->assertSame(
-            ['morphTo' => ['commentable']],
-            $output['model']['relationships']['commentable']
+            ['morphTo' => ['earnable']],
+            $output['model']['relationships']['parent']
         );
     }
 

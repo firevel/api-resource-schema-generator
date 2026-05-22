@@ -417,12 +417,18 @@ class SchemaHandler extends BaseGenerator
                     break;
 
                 case 'morphTo':
-                    if (!empty($field['morphName'])) {
+                    // Laravel's morphTo() auto-detects the morph base from the
+                    // calling method's name (snake_cased). If the supplied
+                    // morphName matches that auto-derived value the explicit
+                    // arg is redundant — emit the bare `morphTo` so the
+                    // rendered method reads `$this->morphTo()` instead of
+                    // `$this->morphTo('parent')`.
+                    $autoDerived = Str::snake($name); // $name is already camelCase ($name = Str::camel($field['name']))
+                    if (!empty($field['morphName']) && $field['morphName'] !== $autoDerived) {
                         $output['model']['relationships'][$name] = [
                             $type => [$field['morphName']]
                         ];
                     } else {
-                        // Simple morphTo - uses relationship name
                         $output['model']['relationships'][$name] = $type;
                     }
                     break;
