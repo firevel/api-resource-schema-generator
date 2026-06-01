@@ -22,6 +22,7 @@ class SchemaHandler extends BaseGenerator
             'model' => [],
         ];
         $this->addFillables($resource);
+        $this->addCasts($resource);
         $this->addDefaults($resource);
         $this->addSortable($resource);
         $this->addSearchable($resource);
@@ -48,6 +49,29 @@ class SchemaHandler extends BaseGenerator
             if (!empty($field['fillable'])) {
                 $output['model']['fillable'][] = $field['name'];
             }
+        }
+        $resource->output = $output;
+        return $resource;
+    }
+
+    public function addCasts($resource)
+    {
+        $output = $resource->output;
+        $output['model']['casts'] = [];
+        foreach ($resource->fields as $field) {
+            $name = $field['name'] ?? null;
+            if ($name === null) {
+                continue;
+            }
+            // Eloquent already casts the framework-managed timestamp columns.
+            if (in_array($name, ['created_at', 'updated_at', 'deleted_at'], true)) {
+                continue;
+            }
+            $cast = $this->getCastByType($field['type'] ?? null);
+            if ($cast === null) {
+                continue;
+            }
+            $output['model']['casts'][$name] = $cast;
         }
         $resource->output = $output;
         return $resource;
@@ -447,6 +471,25 @@ class SchemaHandler extends BaseGenerator
         return $resource;
     }
 
+
+    public function getCastByType($type)
+    {
+        // Basic, unambiguous casts only. Keys, ids and free-form/uuid/enum
+        // strings are intentionally left uncast (string is the default).
+        $types = [
+            'integer' => 'integer',
+            'decimal' => 'decimal:2',
+            'float' => 'float',
+            'boolean' => 'boolean',
+            'date' => 'date',
+            'datetime' => 'datetime',
+            'timestamp' => 'datetime',
+            'json' => 'array',
+            'object' => 'object',
+            'array' => 'array',
+        ];
+        return $types[$type] ?? null;
+    }
 
     public function getFilterableByType($type)
     {

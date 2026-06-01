@@ -622,4 +622,104 @@ class SchemaHandlerTest extends TestCase
         $requires = $handler->context()->get('composer_requires', []);
         $this->assertArrayNotHasKey('firevel/filterable', $requires);
     }
+
+    /** @test */
+    public function casts_maps_basic_scalar_and_structured_types()
+    {
+        $output = $this->runHandler([
+            'name' => 'post',
+            'fields' => [
+                ['name' => 'views', 'type' => 'integer'],
+                ['name' => 'price', 'type' => 'decimal'],
+                ['name' => 'rating', 'type' => 'float'],
+                ['name' => 'active', 'type' => 'boolean'],
+                ['name' => 'published_on', 'type' => 'date'],
+                ['name' => 'published_at', 'type' => 'datetime'],
+                ['name' => 'synced_at', 'type' => 'timestamp'],
+                ['name' => 'meta', 'type' => 'object'],
+                ['name' => 'tags', 'type' => 'array'],
+            ],
+            'relationships' => [],
+        ]);
+
+        $this->assertSame([
+            'views' => 'integer',
+            'price' => 'decimal:2',
+            'rating' => 'float',
+            'active' => 'boolean',
+            'published_on' => 'date',
+            'published_at' => 'datetime',
+            'synced_at' => 'datetime',
+            'meta' => 'object',
+            'tags' => 'array',
+        ], $output['model']['casts']);
+    }
+
+    /** @test */
+    public function casts_leaves_keys_ids_and_freeform_strings_uncast()
+    {
+        // increments / random-id / id / uuid / string / text / enum are intentionally not cast.
+        $output = $this->runHandler([
+            'name' => 'post',
+            'fields' => [
+                ['name' => 'id', 'type' => 'increments'],
+                ['name' => 'token', 'type' => 'random-id'],
+                ['name' => 'user_id', 'type' => 'id'],
+                ['name' => 'public_id', 'type' => 'uuid'],
+                ['name' => 'title', 'type' => 'string'],
+                ['name' => 'body', 'type' => 'text'],
+                ['name' => 'status', 'type' => 'enum'],
+            ],
+            'relationships' => [],
+        ]);
+
+        $this->assertSame([], $output['model']['casts']);
+    }
+
+    /** @test */
+    public function casts_skips_framework_managed_timestamp_columns()
+    {
+        // Eloquent already casts created_at / updated_at / deleted_at.
+        $output = $this->runHandler([
+            'name' => 'post',
+            'fields' => [
+                ['name' => 'created_at', 'type' => 'timestamp'],
+                ['name' => 'updated_at', 'type' => 'timestamp'],
+                ['name' => 'deleted_at', 'type' => 'datetime'],
+                ['name' => 'reviewed_at', 'type' => 'timestamp'],
+            ],
+            'relationships' => [],
+        ]);
+
+        $this->assertSame(['reviewed_at' => 'datetime'], $output['model']['casts']);
+    }
+
+    /** @test */
+    public function casts_is_empty_array_when_no_castable_fields()
+    {
+        $output = $this->runHandler([
+            'name' => 'post',
+            'fields' => [
+                ['name' => 'title', 'type' => 'string'],
+            ],
+            'relationships' => [],
+        ]);
+
+        $this->assertSame([], $output['model']['casts']);
+    }
+
+    /** @test */
+    public function casts_skips_fields_with_unknown_type()
+    {
+        $output = $this->runHandler([
+            'name' => 'post',
+            'fields' => [
+                ['name' => 'mystery', 'type' => 'unknown_type'],
+                ['name' => 'active', 'type' => 'boolean'],
+            ],
+            'relationships' => [],
+        ]);
+
+        $this->assertSame(['active' => 'boolean'], $output['model']['casts']);
+    }
 }
