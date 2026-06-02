@@ -670,7 +670,7 @@ class SeedersTransformerTest extends TestCase
     }
 
     /** @test */
-    public function nested_directive_expands_to_create_get_key_chain(): void
+    public function nested_directive_hoists_child_as_its_own_insert_with_pre_assigned_id(): void
     {
         $out = $this->transform([
             'schemas' => [
@@ -702,15 +702,15 @@ class SeedersTransformerTest extends TestCase
             ],
         ]);
 
-        $this->assertSame(
-            [
-                'App\\Models\\Address' => [
-                    'create' => ['street' => '123 Main', 'city' => 'Springfield'],
-                    'getKey' => null,
-                ],
+        // Child Address is hoisted to its OWN insert before the parent Store,
+        // with a pre-assigned id; the parent FK receives that literal id. No
+        // create()/getKey() chain is emitted, so no model events fire at seed time.
+        $this->assertSame([
+            'demo' => [
+                ['App\\Models\\Address' => ['id' => 1, 'street' => '123 Main', 'city' => 'Springfield']],
+                ['App\\Models\\Store' => ['id' => 1, 'name' => 'Main Store', 'address_id' => 1]],
             ],
-            $out['demo'][0]['App\\Models\\Store']['address_id']
-        );
+        ], $out);
     }
 
     /** @test */
@@ -755,14 +755,18 @@ class SeedersTransformerTest extends TestCase
             ],
         ]);
 
-        $addressArg = $out['demo'][0]['App\\Models\\Store']['address_id']['App\\Models\\Address']['create'];
-        $this->assertSame('123 Main', $addressArg['street']);
+        // Address is hoisted to its own insert (out['demo'][0]); the inner
+        // ref / now directives still resolve inside it.
+        $address = $out['demo'][0]['App\\Models\\Address'];
+        $this->assertSame('123 Main', $address['street']);
         // Country has increments PK → ref resolves to pre-assigned scalar id (1).
-        $this->assertSame(1, $addressArg['country_id']);
+        $this->assertSame(1, $address['country_id']);
         $this->assertSame(
             ['Illuminate\\Support\\Carbon' => ['now' => null]],
-            $addressArg['created_at']
+            $address['created_at']
         );
+        // Parent Store follows the hoisted child, FK pointing at its id.
+        $this->assertSame(1, $out['demo'][1]['App\\Models\\Store']['address_id']);
     }
 
     /** @test */
@@ -803,16 +807,18 @@ class SeedersTransformerTest extends TestCase
             ],
         ]);
 
-        $addressCreate = $out['demo'][0]['App\\Models\\Store']['address_id']['App\\Models\\Address']['create'];
+        // Deepest child first: Geolocation, then Address, then Store.
+        $this->assertSame('App\\Models\\Geolocation', array_key_first($out['demo'][0]));
+        $this->assertSame('App\\Models\\Address', array_key_first($out['demo'][1]));
+        $this->assertSame('App\\Models\\Store', array_key_first($out['demo'][2]));
+
         $this->assertSame(
-            [
-                'App\\Models\\Geolocation' => [
-                    'create' => ['lat' => 40.7, 'lng' => -74.0],
-                    'getKey' => null,
-                ],
-            ],
-            $addressCreate['geolocation_id']
+            ['id' => 1, 'lat' => 40.7, 'lng' => -74.0],
+            $out['demo'][0]['App\\Models\\Geolocation']
         );
+        // Address FK references the hoisted Geolocation id; Store FK the Address id.
+        $this->assertSame(1, $out['demo'][1]['App\\Models\\Address']['geolocation_id']);
+        $this->assertSame(1, $out['demo'][2]['App\\Models\\Store']['address_id']);
     }
 
     /** @test */
@@ -1057,8 +1063,11 @@ class SeedersTransformerTest extends TestCase
             ],
         ]);
 
-        $this->assertArrayHasKey('App\\Models\\Country', $out['demo'][0]);
-        $this->assertArrayHasKey('App\\Models\\Store',   $out['demo'][1]);
+        // Country first (the nested Address refs it), then the hoisted Address,
+        // then the parent Store.
+        $this->assertSame('App\\Models\\Country', array_key_first($out['demo'][0]));
+        $this->assertSame('App\\Models\\Address', array_key_first($out['demo'][1]));
+        $this->assertSame('App\\Models\\Store',   array_key_first($out['demo'][2]));
     }
 
     /** @test */
@@ -1127,6 +1136,512 @@ class SeedersTransformerTest extends TestCase
 
         $this->assertSame($assignedId, $resolvedRef);
         $this->assertIsNotArray($resolvedRef, 'should not emit a Model::where descriptor when a scalar id is available');
+    }
+
+    /** @test */
+    public function it_backfills_declared_default_when_column_is_absent(): void
+    {
+        // insert() bypasses Eloquent $attributes defaults, so a column omitted
+        // from the row data must be filled from the schema's declared default.
+        $out = $this->transform([
+            'schemas' => [
+                $this->schema('Widget', [
+                    $this->uniqueField('name'),
+                    ['name' => 'status', 'type' => 'string', 'default' => 'active'],
+                    ['name' => 'priority', 'type' => 'integer', 'default' => 0],
+                ]),
+            ],
+            'seeders' => [
+                ['name' => 'system', 'resources' => [
+                    ['name' => 'Widget', 'rows' => [
+                        ['data' => ['name' => 'alpha']],
+                    ]],
+                ]],
+            ],
+        ]);
+
+        $this->assertSame([
+            'system' => [
+                ['App\\Models\\Widget' => ['name' => 'alpha', 'status' => 'active', 'priority' => 0]],
+            ],
+        ], $out);
+    }
+
+    /** @test */
+    public function it_does_not_override_an_explicitly_provided_value_with_the_default(): void
+    {
+        $out = $this->transform([
+            'schemas' => [
+                $this->schema('Widget', [
+                    $this->uniqueField('name'),
+                    ['name' => 'status', 'type' => 'string', 'default' => 'active'],
+                ]),
+            ],
+            'seeders' => [
+                ['name' => 'system', 'resources' => [
+                    ['name' => 'Widget', 'rows' => [
+                        ['data' => ['name' => 'alpha', 'status' => 'archived']],
+                    ]],
+                ]],
+            ],
+        ]);
+
+        $this->assertSame('archived', $out['system'][0]['App\\Models\\Widget']['status']);
+    }
+
+    /** @test */
+    public function it_respects_an_explicit_null_over_the_default(): void
+    {
+        // An explicit null is a deliberate choice — the default must not clobber it.
+        $out = $this->transform([
+            'schemas' => [
+                $this->schema('Widget', [
+                    $this->uniqueField('name'),
+                    ['name' => 'status', 'type' => 'string', 'default' => 'active'],
+                ]),
+            ],
+            'seeders' => [
+                ['name' => 'system', 'resources' => [
+                    ['name' => 'Widget', 'rows' => [
+                        ['data' => ['name' => 'alpha', 'status' => null]],
+                    ]],
+                ]],
+            ],
+        ]);
+
+        $this->assertArrayHasKey('status', $out['system'][0]['App\\Models\\Widget']);
+        $this->assertNull($out['system'][0]['App\\Models\\Widget']['status']);
+    }
+
+    /** @test */
+    public function it_does_not_backfill_fields_without_a_declared_default(): void
+    {
+        // A null default is treated as "no default" — mirrors SchemaHandler::addDefaults.
+        $out = $this->transform([
+            'schemas' => [
+                $this->schema('Widget', [
+                    $this->uniqueField('name'),
+                    ['name' => 'note', 'type' => 'string'],
+                    ['name' => 'status', 'type' => 'string', 'default' => null],
+                ]),
+            ],
+            'seeders' => [
+                ['name' => 'system', 'resources' => [
+                    ['name' => 'Widget', 'rows' => [
+                        ['data' => ['name' => 'alpha']],
+                    ]],
+                ]],
+            ],
+        ]);
+
+        $this->assertSame([
+            'system' => [
+                ['App\\Models\\Widget' => ['name' => 'alpha']],
+            ],
+        ], $out);
+    }
+
+    /** @test */
+    public function it_passes_through_unchanged_when_no_schema_exists_for_the_resource(): void
+    {
+        // Seeders-only run (no schemas): nothing to backfill, row passes through.
+        $out = $this->transform([
+            'schemas' => [],
+            'seeders' => [
+                ['name' => 'system', 'resources' => [
+                    ['name' => 'Widget', 'rows' => [
+                        ['data' => ['name' => 'alpha']],
+                    ]],
+                ]],
+            ],
+        ]);
+
+        $this->assertSame([
+            'system' => [
+                ['App\\Models\\Widget' => ['name' => 'alpha']],
+            ],
+        ], $out);
+    }
+
+    /** @test */
+    public function it_backfills_defaults_into_hoisted_nested_inserts(): void
+    {
+        // The hoisted child insert must carry the declared default explicitly,
+        // since insert() bypasses Eloquent $attributes defaults.
+        $out = $this->transform([
+            'schemas' => [
+                $this->schema('Post', [$this->pkField(), $this->uniqueField('title')]),
+                $this->schema('Author', [
+                    $this->pkField(),
+                    $this->uniqueField('name'),
+                    ['name' => 'status', 'type' => 'string', 'default' => 'active'],
+                ]),
+            ],
+            'seeders' => [
+                ['name' => 'demo', 'resources' => [
+                    ['name' => 'Post', 'rows' => [
+                        ['data' => [
+                            'title' => 'Hello',
+                            'author_id' => [
+                                '$' => 'nested',
+                                'resource' => 'Author',
+                                'data' => ['name' => 'jane'],
+                            ],
+                        ]],
+                    ]],
+                ]],
+            ],
+        ]);
+
+        $this->assertSame(
+            ['id' => 1, 'name' => 'jane', 'status' => 'active'],
+            $out['demo'][0]['App\\Models\\Author']
+        );
+        $this->assertSame(1, $out['demo'][1]['App\\Models\\Post']['author_id']);
+    }
+
+    /** @test */
+    public function hoisted_nested_child_continues_the_increments_sequence_of_its_resource(): void
+    {
+        // A top-level Tag takes id 1; a nested Tag child must take id 2 so the
+        // hoisted insert never collides with the top-level row.
+        $out = $this->transform([
+            'schemas' => [
+                $this->schema('Tag',  [$this->pkField(), $this->uniqueField('name')]),
+                $this->schema('Post', [$this->pkField()]),
+            ],
+            'seeders' => [
+                ['name' => 'demo', 'resources' => [
+                    ['name' => 'Tag', 'rows' => [['data' => ['name' => 'php']]]],
+                    ['name' => 'Post', 'rows' => [[
+                        'data' => [
+                            'tag_id' => ['$' => 'nested', 'resource' => 'Tag', 'data' => ['name' => 'laravel']],
+                        ],
+                    ]]],
+                ]],
+            ],
+        ]);
+
+        $this->assertSame(1, $out['demo'][0]['App\\Models\\Tag']['id'], 'top-level Tag keeps id 1');
+        $this->assertSame(2, $out['demo'][1]['App\\Models\\Tag']['id'], 'hoisted nested Tag continues the sequence');
+        $this->assertSame('laravel', $out['demo'][1]['App\\Models\\Tag']['name']);
+        $this->assertSame(2, $out['demo'][2]['App\\Models\\Post']['tag_id']);
+    }
+
+    /** @test */
+    public function nested_child_with_explicit_literal_id_is_honoured(): void
+    {
+        $out = $this->transform([
+            'schemas' => [
+                $this->schema('Address', [$this->pkField()]),
+                $this->schema('Store',   [$this->pkField()]),
+            ],
+            'seeders' => [
+                ['name' => 'demo', 'resources' => [
+                    ['name' => 'Store', 'rows' => [[
+                        'data' => [
+                            'address_id' => [
+                                '$' => 'nested',
+                                'resource' => 'Address',
+                                'data' => ['id' => 99, 'street' => 'x'],
+                            ],
+                        ],
+                    ]]],
+                ]],
+            ],
+        ]);
+
+        $this->assertSame(['id' => 99, 'street' => 'x'], $out['demo'][0]['App\\Models\\Address']);
+        $this->assertSame(99, $out['demo'][1]['App\\Models\\Store']['address_id']);
+    }
+
+    /** @test */
+    public function nested_child_with_unassignable_pk_is_rejected(): void
+    {
+        // A uuid PK can only be known at runtime, so it can't be hoisted into a
+        // literal parent FK — the author must use a flat row + ref instead.
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessageMatches('/can.t be pre-assigned a literal id/');
+
+        $this->transform([
+            'schemas' => [
+                $this->schema('Address', [$this->uuidPkField()]),
+                $this->schema('Store',   [$this->pkField()]),
+            ],
+            'seeders' => [
+                ['name' => 'demo', 'resources' => [
+                    ['name' => 'Store', 'rows' => [[
+                        'data' => [
+                            'address_id' => [
+                                '$' => 'nested',
+                                'resource' => 'Address',
+                                'data' => ['street' => 'x'],
+                            ],
+                        ],
+                    ]]],
+                ]],
+            ],
+        ]);
+    }
+
+    /** @test */
+    public function attach_emits_pivot_inserts_after_all_model_rows(): void
+    {
+        $out = $this->transform([
+            'schemas' => [
+                [
+                    'name' => 'Post',
+                    'fields' => [$this->pkField(), $this->uniqueField('title')],
+                    'relationships' => [['name' => 'tags', 'type' => 'belongsToMany', 'target' => 'Tag']],
+                ],
+                $this->schema('Tag', [$this->pkField(), $this->uniqueField('name')]),
+            ],
+            'seeders' => [
+                ['name' => 'demo', 'resources' => [
+                    ['name' => 'Tag', 'rows' => [
+                        ['ref' => 'php', 'data' => ['name' => 'PHP']],
+                        ['ref' => 'laravel', 'data' => ['name' => 'Laravel']],
+                    ]],
+                    ['name' => 'Post', 'rows' => [
+                        ['data' => [
+                            'title' => 'Hello',
+                            'tags' => ['$' => 'attach', 'refs' => [
+                                ['resource' => 'Tag', 'ref' => 'php'],
+                                ['resource' => 'Tag', 'ref' => 'laravel'],
+                            ]],
+                        ]],
+                    ]],
+                ]],
+            ],
+        ]);
+
+        // Model rows first, pivot links last; `tags` never lands on the Post row.
+        $this->assertCount(5, $out['demo']);
+        $this->assertSame(['id' => 1, 'name' => 'PHP'], $out['demo'][0]['App\\Models\\Tag']);
+        $this->assertSame(['id' => 2, 'name' => 'Laravel'], $out['demo'][1]['App\\Models\\Tag']);
+        $this->assertSame(['id' => 1, 'title' => 'Hello'], $out['demo'][2]['App\\Models\\Post']);
+        $this->assertSame(['table' => 'post_tag', 'insert' => ['post_id' => 1, 'tag_id' => 1]], $out['demo'][3]);
+        $this->assertSame(['table' => 'post_tag', 'insert' => ['post_id' => 1, 'tag_id' => 2]], $out['demo'][4]);
+    }
+
+    /** @test */
+    public function attach_dedupes_bidirectional_declarations(): void
+    {
+        // belongsToMany declared on both ends: attaching from each side produces
+        // the same post_tag row, which must be emitted only once.
+        $out = $this->transform([
+            'schemas' => [
+                [
+                    'name' => 'Post',
+                    'fields' => [$this->pkField(), $this->uniqueField('title')],
+                    'relationships' => [['name' => 'tags', 'type' => 'belongsToMany', 'target' => 'Tag']],
+                ],
+                [
+                    'name' => 'Tag',
+                    'fields' => [$this->pkField(), $this->uniqueField('name')],
+                    'relationships' => [['name' => 'posts', 'type' => 'belongsToMany', 'target' => 'Post']],
+                ],
+            ],
+            'seeders' => [
+                ['name' => 'demo', 'resources' => [
+                    ['name' => 'Post', 'rows' => [
+                        ['ref' => 'hello', 'data' => [
+                            'title' => 'Hello',
+                            'tags' => ['$' => 'attach', 'refs' => [['resource' => 'Tag', 'ref' => 'php']]],
+                        ]],
+                    ]],
+                    ['name' => 'Tag', 'rows' => [
+                        ['ref' => 'php', 'data' => [
+                            'name' => 'PHP',
+                            'posts' => ['$' => 'attach', 'refs' => [['resource' => 'Post', 'ref' => 'hello']]],
+                        ]],
+                    ]],
+                ]],
+            ],
+        ]);
+
+        // 2 model rows + exactly 1 pivot row (not 2).
+        $this->assertCount(3, $out['demo']);
+        $this->assertSame(
+            ['table' => 'post_tag', 'insert' => ['post_id' => 1, 'tag_id' => 1]],
+            $out['demo'][2]
+        );
+    }
+
+    /** @test */
+    public function attach_to_an_undeclared_belongstomany_is_rejected(): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessageMatches('/no belongsToMany pivot/');
+
+        $this->transform([
+            'schemas' => [
+                $this->schema('Post', [$this->pkField(), $this->uniqueField('title')]),
+                $this->schema('Tag', [$this->pkField(), $this->uniqueField('name')]),
+            ],
+            'seeders' => [
+                ['name' => 'demo', 'resources' => [
+                    ['name' => 'Tag', 'rows' => [['ref' => 'php', 'data' => ['name' => 'PHP']]]],
+                    ['name' => 'Post', 'rows' => [
+                        ['data' => [
+                            'title' => 'Hello',
+                            'tags' => ['$' => 'attach', 'refs' => [['resource' => 'Tag', 'ref' => 'php']]],
+                        ]],
+                    ]],
+                ]],
+            ],
+        ]);
+    }
+
+    /** @test */
+    public function attach_nested_inside_a_column_value_is_rejected(): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessageMatches('/attach directive is only valid/');
+
+        $this->transform([
+            'schemas' => [$this->schema('Address', [$this->pkField()])],
+            'seeders' => [
+                ['name' => 'demo', 'resources' => [
+                    ['name' => 'Store', 'rows' => [[
+                        'data' => [
+                            'address_id' => [
+                                '$' => 'nested',
+                                'resource' => 'Address',
+                                'data' => [
+                                    'extras' => ['$' => 'attach', 'refs' => [['resource' => 'Tag', 'ref' => 'x']]],
+                                ],
+                            ],
+                        ],
+                    ]]],
+                ]],
+            ],
+        ]);
+    }
+
+    /** @test */
+    public function morph_expands_to_id_and_type_columns(): void
+    {
+        // morphTo: the `commentable` key expands to commentable_id (the parent's
+        // id) + commentable_type (the morph-map alias, kebab-singular).
+        $out = $this->transform([
+            'schemas' => [
+                $this->schema('Post', [$this->pkField(), $this->uniqueField('title')]),
+                $this->schema('Comment', [$this->pkField()]),
+            ],
+            'seeders' => [
+                ['name' => 'demo', 'resources' => [
+                    ['name' => 'Post', 'rows' => [['ref' => 'hello', 'data' => ['title' => 'Hello']]]],
+                    ['name' => 'Comment', 'rows' => [[
+                        'data' => [
+                            'body' => 'Nice',
+                            'commentable' => ['$' => 'morph', 'resource' => 'Post', 'ref' => 'hello'],
+                        ],
+                    ]]],
+                ]],
+            ],
+        ]);
+
+        $this->assertSame(
+            ['id' => 1, 'body' => 'Nice', 'commentable_id' => 1, 'commentable_type' => 'post'],
+            $out['demo'][1]['App\\Models\\Comment']
+        );
+    }
+
+    /** @test */
+    public function morph_type_uses_kebab_singular_alias_for_multiword_resource(): void
+    {
+        $out = $this->transform([
+            'schemas' => [
+                $this->schema('BlogPost', [$this->pkField(), $this->uniqueField('title')]),
+                $this->schema('Comment', [$this->pkField()]),
+            ],
+            'seeders' => [
+                ['name' => 'demo', 'resources' => [
+                    ['name' => 'BlogPost', 'rows' => [['ref' => 'hello', 'data' => ['title' => 'Hello']]]],
+                    ['name' => 'Comment', 'rows' => [[
+                        'data' => ['commentable' => ['$' => 'morph', 'resource' => 'BlogPost', 'ref' => 'hello']],
+                    ]]],
+                ]],
+            ],
+        ]);
+
+        // Matches MorphMapGenerator's alias: Str::kebab(Str::singular('BlogPost')).
+        $this->assertSame('blog-post', $out['demo'][1]['App\\Models\\Comment']['commentable_type']);
+    }
+
+    /** @test */
+    public function morph_orders_referenced_parent_before_the_row(): void
+    {
+        // Comment is declared BEFORE Post, but the morph dependency forces Post first.
+        $out = $this->transform([
+            'schemas' => [
+                $this->schema('Post', [$this->pkField(), $this->uniqueField('title')]),
+                $this->schema('Comment', [$this->pkField()]),
+            ],
+            'seeders' => [
+                ['name' => 'demo', 'resources' => [
+                    ['name' => 'Comment', 'rows' => [[
+                        'data' => ['commentable' => ['$' => 'morph', 'resource' => 'Post', 'ref' => 'hello']],
+                    ]]],
+                    ['name' => 'Post', 'rows' => [['ref' => 'hello', 'data' => ['title' => 'Hello']]]],
+                ]],
+            ],
+        ]);
+
+        $this->assertSame('App\\Models\\Post', array_key_first($out['demo'][0]));
+        $this->assertSame('App\\Models\\Comment', array_key_first($out['demo'][1]));
+    }
+
+    /** @test */
+    public function morphmany_is_seeded_as_morphto_on_each_child(): void
+    {
+        // morphMany has its FK on the child, so a Post's many Comments are just
+        // child rows each carrying a morphTo back at the Post.
+        $out = $this->transform([
+            'schemas' => [
+                $this->schema('Post', [$this->pkField(), $this->uniqueField('title')]),
+                $this->schema('Comment', [$this->pkField()]),
+            ],
+            'seeders' => [
+                ['name' => 'demo', 'resources' => [
+                    ['name' => 'Post', 'rows' => [['ref' => 'hello', 'data' => ['title' => 'Hello']]]],
+                    ['name' => 'Comment', 'rows' => [
+                        ['data' => ['body' => 'first',  'commentable' => ['$' => 'morph', 'resource' => 'Post', 'ref' => 'hello']]],
+                        ['data' => ['body' => 'second', 'commentable' => ['$' => 'morph', 'resource' => 'Post', 'ref' => 'hello']]],
+                    ]],
+                ]],
+            ],
+        ]);
+
+        $this->assertSame(['id' => 1, 'body' => 'first',  'commentable_id' => 1, 'commentable_type' => 'post'], $out['demo'][1]['App\\Models\\Comment']);
+        $this->assertSame(['id' => 2, 'body' => 'second', 'commentable_id' => 1, 'commentable_type' => 'post'], $out['demo'][2]['App\\Models\\Comment']);
+    }
+
+    /** @test */
+    public function morph_nested_inside_a_column_value_is_rejected(): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessageMatches('/morph directive is only valid/');
+
+        $this->transform([
+            'schemas' => [$this->schema('Address', [$this->pkField()])],
+            'seeders' => [
+                ['name' => 'demo', 'resources' => [
+                    ['name' => 'Store', 'rows' => [[
+                        'data' => [
+                            'address_id' => [
+                                '$' => 'nested',
+                                'resource' => 'Address',
+                                'data' => [
+                                    'owner' => ['$' => 'morph', 'resource' => 'Post', 'ref' => 'x'],
+                                ],
+                            ],
+                        ],
+                    ]]],
+                ]],
+            ],
+        ]);
     }
 
 }
