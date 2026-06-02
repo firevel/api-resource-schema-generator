@@ -137,6 +137,13 @@ class SeedersTransformerGenerator extends BaseGenerator
 
         $this->context()->set('transformed_seeders', $transformed);
 
+        // Rewrite the resource's own `seeders` attribute to the transformed map
+        // so a downstream `{scope: seeders, pipeline: seeders}` step (e.g. the
+        // `api-seeders` meta-pipeline) resolves the generator-level map rather
+        // than the original LLM array. Harmless for `api-resource-schemas`,
+        // whose consolidator reads `transformed_seeders` from context instead.
+        $this->resource()->seeders = $transformed;
+
         // Expose merged structure for standalone runs (chained via @output).
         $output = $this->resource()->all();
         $output['seeders'] = $transformed;

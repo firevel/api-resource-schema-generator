@@ -84,6 +84,46 @@ class ApiResourceSchemaServiceProvider extends ServiceProvider
             ],
         ]);
 
+        // Standalone, one-command seeders build: translate the LLM-format
+        // `seeders` (resolving $refs and backfilling schema defaults) then hand
+        // the generator-level map to the `seeders` pipeline to emit
+        // <Set>DataSeeder.php + DatabaseSeeder. The transform step rewrites the
+        // resource's `seeders` attribute to the transformed map, so the scoped
+        // `seeders` step below resolves that map (not the original LLM array).
+        // Pass the resource `schemas` alongside `seeders` so $refs resolve and
+        // defaults backfill — decoupled from app/schema (re)generation.
+        $manager->extend('api-seeders', [
+            'description' => 'Build seeder classes from prompt-style seeder JSON: translate the LLM `seeders` ($ref/$now/$hash/$uuid/$attach + default backfill) then emit one <Set>DataSeeder.php per set plus DatabaseSeeder. Pass `schemas` alongside so $refs resolve and defaults backfill.',
+            'input_schema' => [
+                'type' => 'object',
+                'required' => ['seeders'],
+                'properties' => [
+                    'seeders' => [
+                        'type' => 'array',
+                        'items' => [
+                            'type' => 'object',
+                            'required' => ['name', 'resources'],
+                            'properties' => [
+                                'name' => ['type' => 'string', 'minLength' => 1],
+                                'resources' => ['type' => 'array'],
+                            ],
+                        ],
+                    ],
+                    'schemas' => ['type' => 'array'],
+                ],
+            ],
+            'input_error_messages' => [
+                '/seeders' => "Pipeline 'api-seeders' requires a top-level `seeders` array of `{name, resources}` set objects (e.g. [{\"name\":\"system\",\"resources\":[...]},{\"name\":\"demo\",\"resources\":[...]}]). Pass the resource `schemas` array alongside so \$refs resolve and defaults backfill.",
+            ],
+            'steps' => [
+                'transform' => \Firevel\ApiResourceSchemaGenerator\SeedersTransformerGenerator::class,
+                [
+                    'scope' => 'seeders',
+                    'pipeline' => 'seeders',
+                ],
+            ],
+        ]);
+
         // Meta-pipeline: iterates `schemas.*` through `api-resource-schema`,
         // optionally transforms `seeders`, then consolidates. Designed to
         // chain into `generic-app` / `appengine-app` via `--pipe` /
