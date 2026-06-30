@@ -23,7 +23,7 @@ class SchemaConsolidatorGenerator extends BaseGenerator
             return;
         }
 
-        $defaultPath = 'schemas/app.json';
+        $defaultPath = $this->defaultOutputPath();
         $headless = $this->isDryRun() || $this->shouldSkipExisting();
 
         // Resolution order for the output path:
@@ -84,7 +84,31 @@ class SchemaConsolidatorGenerator extends BaseGenerator
             }
         }
 
-        // Build the consolidated output structure
+        $output = $this->buildConsolidatedOutput($schemas);
+
+        $this->writeOutput($path, $output, count($schemas));
+    }
+
+    /**
+     * Default path for the consolidated descriptor. Overridable by subclasses
+     * (e.g. the one-shot api-resource(s)-from-schema bridge writes to a system
+     * temp file rather than into the project's schemas/ directory).
+     */
+    protected function defaultOutputPath(): string
+    {
+        return 'schemas/app.json';
+    }
+
+    /**
+     * Build the consolidated output structure from the collected schemas.
+     *
+     * Starts from the full pre-scoped input so non-`schemas` top-level keys
+     * (service, metadata, etc.) survive, sets `resources` to the processed
+     * schemas, then folds in the generator-level seeders and Composer requires
+     * accumulated in the pipeline context.
+     */
+    protected function buildConsolidatedOutput(array $schemas): array
+    {
         // Start with all data from the full input (before scoping)
         $output = $this->input() ? $this->input()->all() : [];
 
@@ -94,7 +118,7 @@ class SchemaConsolidatorGenerator extends BaseGenerator
         $output = $this->mergeTransformedSeeders($output);
         $output = $this->mergeGeneratorRequires($output);
 
-        $this->writeOutput($path, $output, count($schemas));
+        return $output;
     }
 
     /**

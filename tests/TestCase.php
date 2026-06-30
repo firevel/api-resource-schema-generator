@@ -13,6 +13,11 @@ abstract class TestCase extends Orchestra
     protected function getPackageProviders($app)
     {
         return [
+            // Binds the FirevelGeneratorManager singleton and merges the
+            // generator's config pipelines (api-resource, api-resources, …)
+            // that our from-schema pipelines reference. In a real app this is
+            // auto-discovered; testbench needs it listed explicitly.
+            \Firevel\Generator\ServiceProvider::class,
             ApiResourceSchemaServiceProvider::class,
         ];
     }
